@@ -1,0 +1,67 @@
+{
+  "name": "06 - LifeSync Reminder Delivery",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lifesync-reminder",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Reminder Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "notes": "Called by the Conversation Handler (Workflow 01) when a user sets a reminder via Telegram. The request body should include: { message, chatId, scheduledFor }"
+    },
+    {
+      "parameters": {
+        "amount": "={{ Math.max(0, (new Date($json.body.scheduledFor).getTime() - Date.now()) / 1000) }}",
+        "unit": "seconds"
+      },
+      "id": "wait-node",
+      "name": "Wait Until Reminder Time",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [440, 300],
+      "notes": "Calculates seconds until the reminder time and waits. For reminders far in the future, n8n persists this across restarts."
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Reminder Webhook').item.json.body.chatId || 'YOUR_TELEGRAM_CHAT_ID' }}",
+        "text": "=\\u23F0 *Reminder*\\n\\n{{ $('Reminder Webhook').item.json.body.message }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-reminder",
+      "name": "Send Reminder",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [660, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CREDENTIAL_ID",
+          "name": "LifeSync Bot"
+        }
+      },
+      "notes": "SETUP: Replace YOUR_TELEGRAM_CHAT_ID as fallback"
+    }
+  ],
+  "connections": {
+    "Reminder Webhook": {
+      "main": [
+        [{ "node": "Wait Until Reminder Time", "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait Until Reminder Time": {
+      "main": [
+        [{ "node": "Send Reminder", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [{ "name": "LifeSync" }]
+}

@@ -1,0 +1,169 @@
+{
+  "name": "05 - LifeSync Slack Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "event": "message",
+        "channelId": ["YOUR_SLACK_CHANNEL_IDS"],
+        "options": {}
+      },
+      "id": "slack-trigger",
+      "name": "Slack Trigger",
+      "type": "n8n-nodes-base.slackTrigger",
+      "typeVersion": 1,
+      "position": [220, 300],
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "SLACK_CREDENTIAL_ID",
+          "name": "Slack Account"
+        }
+      },
+      "notes": "SETUP: Connect Slack OAuth2 credentials and select the channels you want to monitor."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.event.bot_id }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "empty" }
+            }
+          ]
+        }
+      },
+      "id": "filter-bots",
+      "name": "Skip Bot Messages",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const msg = $input.item.json;\nconst text = msg.event?.text || msg.text || '';\nconst user = msg.event?.user || 'Unknown';\nconst channel = msg.event?.channel || '';\nconst ts = msg.event?.ts || '';\n\nreturn [{\n  json: {\n    text,\n    user,\n    channel,\n    timestamp: ts,\n    promptText: `Slack message from user ${user} in channel ${channel}:\\n\\n${text}`\n  }\n}];"
+      },
+      "id": "extract-message",
+      "name": "Extract Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $credentials.httpHeaderAuth.value }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20241022\",\n  \"max_tokens\": 256,\n  \"system\": \"You are filtering Slack messages for a busy parent. Determine if this message is relevant to family scheduling, kid activities, school events, or anything a parent would want to know about outside of work. Respond with ONLY a JSON object: {\\\"relevant\\\": true/false, \\\"summary\\\": \\\"one sentence summary if relevant\\\", \\\"category\\\": \\\"work|family|school|social|irrelevant\\\"}\",\n  \"messages\": [{\"role\": \"user\", \"content\": {{ JSON.stringify($json.promptText) }}}]\n}",
+        "options": {}
+      },
+      "id": "claude-filter",
+      "name": "Claude Filter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.item.json;\nconst msgData = $('Extract Message').item.json;\nlet parsed;\n\ntry {\n  parsed = JSON.parse(response.content[0].text);\n} catch (e) {\n  const match = response.content[0].text.match(/\\{[\\s\\S]*\\}/);\n  parsed = match ? JSON.parse(match[0]) : { relevant: false };\n}\n\nreturn [{\n  json: {\n    ...msgData,\n    ...parsed\n  }\n}];"
+      },
+      "id": "parse-filter",
+      "name": "Parse Filter Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.relevant }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "id": "is-relevant",
+      "name": "Is Relevant?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1320, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=\\uD83D\\uDCAC *Slack Update*\\n\\n{{ $json.summary }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-telegram",
+      "name": "Send to Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1540, 200],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CREDENTIAL_ID",
+          "name": "LifeSync Bot"
+        }
+      },
+      "notes": "SETUP: Replace YOUR_TELEGRAM_CHAT_ID"
+    }
+  ],
+  "connections": {
+    "Slack Trigger": {
+      "main": [
+        [{ "node": "Skip Bot Messages", "type": "main", "index": 0 }]
+      ]
+    },
+    "Skip Bot Messages": {
+      "main": [
+        [{ "node": "Extract Message", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Extract Message": {
+      "main": [
+        [{ "node": "Claude Filter", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude Filter": {
+      "main": [
+        [{ "node": "Parse Filter Result", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Filter Result": {
+      "main": [
+        [{ "node": "Is Relevant?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is Relevant?": {
+      "main": [
+        [{ "node": "Send to Telegram", "type": "main", "index": 0 }],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [{ "name": "LifeSync" }]
+}

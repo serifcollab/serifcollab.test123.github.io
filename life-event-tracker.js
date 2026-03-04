@@ -363,7 +363,7 @@
         var viewEl = document.getElementById('view-' + view);
         if (viewEl) viewEl.classList.add('active');
         var titles = {
-            dashboard: 'Dashboard', inbox: 'Unified Inbox', sms: 'SMS Chat', channels: 'Channels',
+            dashboard: 'Dashboard', inbox: 'Unified Inbox', sms: 'Telegram Chat', channels: 'Channels',
             automations: 'Automations', calendar: 'Calendar', family: 'Family Hub', settings: 'Settings'
         };
         $('#pageTitle').textContent = titles[view] || 'Dashboard';

@@ -1,0 +1,200 @@
+{
+  "name": "02 - LifeSync Gmail Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [{ "mode": "everyMinute", "value": 5 }]
+        },
+        "filters": {
+          "readStatus": "unread"
+        }
+      },
+      "id": "gmail-trigger",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 300],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail Account"
+        }
+      },
+      "notes": "SETUP: Connect your Gmail OAuth2 credentials. Polls every 5 minutes for unread emails."
+    },
+    {
+      "parameters": {
+        "jsCode": "const email = $input.item.json;\n\n// Extract key fields\nconst from = email.from?.value?.[0]?.address || email.from || 'Unknown';\nconst subject = email.subject || 'No Subject';\nconst body = (email.text || email.snippet || '').substring(0, 2000); // Limit body size\nconst date = email.date || new Date().toISOString();\n\nreturn [{\n  json: {\n    from,\n    subject,\n    body,\n    date,\n    emailId: email.id,\n    promptText: `From: ${from}\\nSubject: ${subject}\\nDate: ${date}\\n\\nBody:\\n${body}`\n  }\n}];"
+      },
+      "id": "extract-email",
+      "name": "Extract Email Fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $credentials.httpHeaderAuth.value }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20241022\",\n  \"max_tokens\": 512,\n  \"system\": \"You are a family email classifier. Analyze this email and extract relevant information for a busy parent. Respond with ONLY a JSON object (no markdown, no code blocks) with these fields:\\n- summary: 1-2 sentence summary\\n- category: one of [school, sports, medical, family, work, social, bills, spam]\\n- priority: one of [high, medium, low]\\n- has_event: boolean - does this contain a date/time event?\\n- event_details: if has_event is true, object with {title, date, time, location}\\n- has_action_item: boolean - does this require a response or action?\\n- action_item: if has_action_item is true, brief description of what's needed\\n- notify_josh: boolean - should the co-parent be notified about this?\",\n  \"messages\": [{\"role\": \"user\", \"content\": {{ JSON.stringify($json.promptText) }}}]\n}",
+        "options": {}
+      },
+      "id": "claude-classify",
+      "name": "Claude Classify Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.item.json;\nconst emailData = $('Extract Email Fields').item.json;\nlet parsed;\n\ntry {\n  parsed = JSON.parse(response.content[0].text);\n} catch (e) {\n  // Try to extract JSON from the response\n  const match = response.content[0].text.match(/\\{[\\s\\S]*\\}/);\n  if (match) {\n    parsed = JSON.parse(match[0]);\n  } else {\n    parsed = {\n      summary: 'Could not parse email',\n      category: 'unknown',\n      priority: 'low',\n      has_event: false,\n      has_action_item: false,\n      notify_josh: false\n    };\n  }\n}\n\nreturn [{\n  json: {\n    ...emailData,\n    ...parsed,\n    timestamp: new Date().toISOString(),\n    source: 'gmail'\n  }\n}];"
+      },
+      "id": "parse-classification",
+      "name": "Parse Classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.priority }}",
+              "rightValue": "low",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ]
+        }
+      },
+      "id": "priority-filter",
+      "name": "Priority >= Medium?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1100, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.item.json;\nconst priorityEmoji = { high: '\\u2757', medium: '\\u2755', low: '\\u2139\\uFE0F' };\nconst categoryEmoji = { school: '\\uD83C\\uDFEB', sports: '\\u26BD', medical: '\\uD83C\\uDFE5', family: '\\uD83D\\uDC68\\u200D\\uD83D\\uDC69\\u200D\\uD83D\\uDC67', work: '\\uD83D\\uDCBC', social: '\\uD83C\\uDF89', bills: '\\uD83D\\uDCB0', spam: '\\uD83D\\uDEAB' };\n\nlet message = `${priorityEmoji[data.priority] || ''} *${data.category?.toUpperCase() || 'EMAIL'}*\\n\\n`;\nmessage += `*From:* ${data.from}\\n`;\nmessage += `*Subject:* ${data.subject}\\n\\n`;\nmessage += `${data.summary}\\n`;\n\nif (data.has_event && data.event_details) {\n  const e = data.event_details;\n  message += `\\n\\uD83D\\uDCC5 *Event Detected:* ${e.title || 'TBD'}\\n`;\n  if (e.date) message += `Date: ${e.date}\\n`;\n  if (e.time) message += `Time: ${e.time}\\n`;\n  if (e.location) message += `Location: ${e.location}\\n`;\n}\n\nif (data.has_action_item) {\n  message += `\\n\\u26A0\\uFE0F *Action needed:* ${data.action_item}\\n`;\n}\n\nreturn [{ json: { message, chatId: 'YOUR_TELEGRAM_CHAT_ID' } }];"
+      },
+      "id": "format-telegram",
+      "name": "Format Telegram Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 200],
+      "notes": "SETUP: Replace YOUR_TELEGRAM_CHAT_ID with your actual Telegram chat ID"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-telegram",
+      "name": "Send to Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1540, 200],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CREDENTIAL_ID",
+          "name": "LifeSync Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "value": "YOUR_SHEET_ID" },
+        "sheetName": { "value": "EventLog" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ $json.timestamp }}",
+            "source": "gmail",
+            "from": "={{ $json.from }}",
+            "subject": "={{ $json.subject }}",
+            "summary": "={{ $json.summary }}",
+            "category": "={{ $json.category }}",
+            "priority": "={{ $json.priority }}",
+            "has_event": "={{ $json.has_event }}",
+            "has_action_item": "={{ $json.has_action_item }}",
+            "action_item": "={{ $json.action_item || '' }}"
+          }
+        }
+      },
+      "id": "log-to-sheet",
+      "name": "Log to Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1100, 450],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GSHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets"
+        }
+      },
+      "notes": "SETUP: Replace YOUR_SHEET_ID with your Google Sheet ID"
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [{ "node": "Extract Email Fields", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract Email Fields": {
+      "main": [
+        [{ "node": "Claude Classify Email", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude Classify Email": {
+      "main": [
+        [{ "node": "Parse Classification", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Classification": {
+      "main": [
+        [
+          { "node": "Priority >= Medium?", "type": "main", "index": 0 },
+          { "node": "Log to Google Sheet", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Priority >= Medium?": {
+      "main": [
+        [{ "node": "Format Telegram Message", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Format Telegram Message": {
+      "main": [
+        [{ "node": "Send to Telegram", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [{ "name": "LifeSync" }]
+}

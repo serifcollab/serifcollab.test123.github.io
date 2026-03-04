@@ -1,0 +1,158 @@
+{
+  "name": "04 - LifeSync Daily Digest",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Every Morning at 7am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 300],
+      "notes": "Fires daily at 7:00 AM. Adjust the cron expression for your timezone."
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": { "value": "YOUR_SHEET_ID" },
+        "sheetName": { "value": "EventLog" },
+        "options": {}
+      },
+      "id": "read-event-log",
+      "name": "Read Event Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [440, 200],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GSHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets"
+        }
+      },
+      "notes": "SETUP: Replace YOUR_SHEET_ID"
+    },
+    {
+      "parameters": {
+        "calendarId": "primary",
+        "options": {
+          "timeMin": "={{ new Date().toISOString() }}",
+          "timeMax": "={{ new Date(Date.now() + 86400000).toISOString() }}"
+        }
+      },
+      "id": "get-today-events",
+      "name": "Get Today's Calendar Events",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.1,
+      "position": [440, 400],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "GCAL_CREDENTIAL_ID",
+          "name": "Google Calendar"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gather today's events and recent log items\nconst calEvents = $('Get Today\\'s Calendar Events').all().map(i => i.json);\nconst logItems = $('Read Event Log').all().map(i => i.json);\n\n// Filter log for items from the last 24 hours with action items\nconst yesterday = new Date(Date.now() - 86400000).toISOString();\nconst recentActions = logItems.filter(item => \n  item.timestamp > yesterday && item.has_action_item === 'true'\n);\n\n// Format calendar events\nlet calendarText = 'No events scheduled.';\nif (calEvents.length > 0) {\n  calendarText = calEvents.map(e => {\n    const time = e.start?.dateTime ? new Date(e.start.dateTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : 'All day';\n    return `- ${time}: ${e.summary || 'Untitled'}${e.location ? ' @ ' + e.location : ''}`;\n  }).join('\\n');\n}\n\n// Format action items\nlet actionsText = 'No pending action items.';\nif (recentActions.length > 0) {\n  actionsText = recentActions.map(a => `- [${a.source}] ${a.action_item}`).join('\\n');\n}\n\nconst digestPrompt = `Create a brief, friendly morning briefing for a parent. Today is ${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}.\n\nToday's Calendar:\n${calendarText}\n\nPending Action Items:\n${actionsText}\n\nFormat it as a short, scannable Telegram message with emojis. Keep it under 500 characters. Start with a greeting.`;\n\nreturn [{ json: { digestPrompt } }];"
+      },
+      "id": "build-digest",
+      "name": "Build Digest Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $credentials.httpHeaderAuth.value }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 512,\n  \"messages\": [{\"role\": \"user\", \"content\": {{ JSON.stringify($json.digestPrompt) }}}]\n}",
+        "options": {}
+      },
+      "id": "claude-digest",
+      "name": "Claude Generate Digest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.content[0].text }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-digest",
+      "name": "Send Morning Digest",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1100, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CREDENTIAL_ID",
+          "name": "LifeSync Bot"
+        }
+      },
+      "notes": "SETUP: Replace YOUR_TELEGRAM_CHAT_ID"
+    }
+  ],
+  "connections": {
+    "Every Morning at 7am": {
+      "main": [
+        [
+          { "node": "Read Event Log", "type": "main", "index": 0 },
+          { "node": "Get Today's Calendar Events", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Read Event Log": {
+      "main": [
+        [{ "node": "Build Digest Prompt", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Today's Calendar Events": {
+      "main": [
+        [{ "node": "Build Digest Prompt", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Digest Prompt": {
+      "main": [
+        [{ "node": "Claude Generate Digest", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude Generate Digest": {
+      "main": [
+        [{ "node": "Send Morning Digest", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [{ "name": "LifeSync" }]
+}
