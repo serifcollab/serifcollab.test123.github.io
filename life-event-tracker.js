@@ -42,7 +42,9 @@
         currentView: 'dashboard',
         calendarMonth: new Date().getMonth(),
         calendarYear: new Date().getFullYear(),
-        selectedDate: new Date()
+        selectedDate: new Date(),
+        smsChat: [],
+        smsActionLog: []
     };
 
     // ==================== SEED DATA ====================
@@ -361,13 +363,18 @@
         var viewEl = document.getElementById('view-' + view);
         if (viewEl) viewEl.classList.add('active');
         var titles = {
-            dashboard: 'Dashboard', inbox: 'Unified Inbox', channels: 'Channels',
+            dashboard: 'Dashboard', inbox: 'Unified Inbox', sms: 'SMS Chat', channels: 'Channels',
             automations: 'Automations', calendar: 'Calendar', family: 'Family Hub', settings: 'Settings'
         };
         $('#pageTitle').textContent = titles[view] || 'Dashboard';
         // Refresh views
         if (view === 'dashboard') renderDashboard();
         if (view === 'inbox') renderInbox();
+        if (view === 'sms') {
+            renderSmsChat();
+            var badge = $('#smsBadge');
+            if (badge) { badge.textContent = '0'; badge.style.display = 'none'; }
+        }
         if (view === 'channels') renderChannels();
         if (view === 'automations') renderAutomations();
         if (view === 'calendar') renderCalendar();
@@ -1226,6 +1233,698 @@
         $('#notifDot').classList.add('active');
     }
 
+    // ==================== SMS CHAT ENGINE ====================
+
+    function initSmsChat() {
+        // Seed initial welcome messages
+        state.smsChat = [
+            { type: 'date', text: 'Today' },
+            {
+                type: 'incoming', time: minutesAgo(60),
+                text: "Hey! I'm LifeSync, your life command center. I'm monitoring all 8 of your channels right now. Text me anytime to check on things or tell me what to do."
+            },
+            {
+                type: 'incoming', time: minutesAgo(45),
+                text: "NEW from Sarah Chen (Text): Lily's birthday party invitation for Emma — Saturday March 7 at 2pm at Jump Zone.",
+                action: {
+                    title: 'Birthday Party Detected',
+                    desc: 'I can add this to your calendars and notify Josh.',
+                    buttons: [
+                        { label: 'Add to both calendars', id: 'sms-add-cal-party' },
+                        { label: 'Text Josh', id: 'sms-notify-josh-party' },
+                        { label: 'RSVP to Sarah', id: 'sms-rsvp-sarah' }
+                    ]
+                }
+            },
+            {
+                type: 'incoming', time: minutesAgo(30),
+                text: "NEW from St. Patrick School: Weekly newsletter posted. I extracted Emma's homework for the week:\n\n Mon: Math Ch.5 + reading\n Tue: Spelling + science journal\n Wed: Math fractions + reading\n Thu: Book report outline\n Fri: No homework!\n\nAlso: permission slip for March 20 field trip due by March 13."
+            },
+            {
+                type: 'incoming', time: minutesAgo(15),
+                text: "HEADS UP: David Park (Work Email) rescheduled the Q1 review to Thursday at 3pm. I've already updated your work calendar."
+            }
+        ];
+
+        // Input handling
+        var input = $('#smsInput');
+        var sendBtn = $('#smsSendBtn');
+
+        function handleSend() {
+            var text = input.value.trim();
+            if (!text) return;
+            input.value = '';
+            addSmsBubble('outgoing', text);
+            processUserMessage(text);
+        }
+
+        sendBtn.addEventListener('click', handleSend);
+        input.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') { e.preventDefault(); handleSend(); }
+        });
+
+        // Quick action button
+        $('#smsQuickActions').addEventListener('click', function() {
+            addSmsBubble('outgoing', "What are my action items?");
+            processUserMessage("What are my action items?");
+        });
+
+        // Suggestion buttons
+        $$('.sms-suggestion-btn').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var text = btn.textContent;
+                addSmsBubble('outgoing', text);
+                processUserMessage(text);
+                input.focus();
+            });
+        });
+    }
+
+    function renderSmsChat() {
+        var container = $('#smsMessages');
+        container.innerHTML = '';
+        state.smsChat.forEach(function(msg) {
+            if (msg.type === 'date') {
+                container.innerHTML += '<div class="sms-date-divider">' + msg.text + '</div>';
+                return;
+            }
+            var wrapper = document.createElement('div');
+            wrapper.className = 'sms-bubble-wrapper ' + msg.type;
+
+            var label = msg.type === 'incoming' ? 'LifeSync' : 'You';
+            var timeStr = msg.time ? formatTime12(msg.time) : '';
+
+            var html = '<div class="sms-bubble-label">' + label + '</div>';
+            html += '<div class="sms-bubble">' + escapeHtml(msg.text).replace(/\n/g, '<br>') + '</div>';
+
+            if (msg.action) {
+                html += '<div class="sms-action-bubble">';
+                html += '<div class="sms-action-bubble-title">' + escapeHtml(msg.action.title) + '</div>';
+                html += '<div class="sms-action-bubble-desc">' + escapeHtml(msg.action.desc) + '</div>';
+                html += '<div class="sms-action-bubble-btns">';
+                msg.action.buttons.forEach(function(b) {
+                    html += '<button class="sms-action-btn' + (b.done ? ' done' : '') + '" data-sms-action="' + b.id + '">' + (b.done ? '\u2713 ' : '') + escapeHtml(b.label) + '</button>';
+                });
+                html += '</div></div>';
+            }
+
+            html += '<div class="sms-bubble-time">' + timeStr + '</div>';
+            wrapper.innerHTML = html;
+            container.appendChild(wrapper);
+        });
+
+        // Bind action buttons
+        container.querySelectorAll('.sms-action-btn:not(.done)').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                executeSmsAction(btn.dataset.smsAction, btn);
+            });
+        });
+
+        scrollSmsToBottom();
+    }
+
+    function addSmsBubble(type, text, action) {
+        state.smsChat.push({ type: type, time: new Date(), text: text, action: action || null });
+        if ($('#view-sms').classList.contains('active')) {
+            renderSmsChat();
+        }
+    }
+
+    function scrollSmsToBottom() {
+        var container = $('#smsMessages');
+        if (container) container.scrollTop = container.scrollHeight;
+    }
+
+    function showTypingThenReply(replyText, action, delay) {
+        delay = delay || 800 + Math.random() * 1200;
+        // Add typing indicator
+        var container = $('#smsMessages');
+        if (container) {
+            var typing = document.createElement('div');
+            typing.className = 'sms-typing active';
+            typing.id = 'smsTypingIndicator';
+            typing.innerHTML = '<div class="sms-typing-dot"></div><div class="sms-typing-dot"></div><div class="sms-typing-dot"></div>';
+            container.appendChild(typing);
+            scrollSmsToBottom();
+        }
+        setTimeout(function() {
+            var indicator = document.getElementById('smsTypingIndicator');
+            if (indicator) indicator.remove();
+            addSmsBubble('incoming', replyText, action);
+            addSmsActionLog(replyText.substring(0, 60) + (replyText.length > 60 ? '...' : ''));
+        }, delay);
+    }
+
+    function addSmsActionLog(text) {
+        state.smsActionLog.unshift({ text: text, time: new Date() });
+        var container = $('#smsRecentActions');
+        if (container) {
+            container.innerHTML = '';
+            state.smsActionLog.slice(0, 8).forEach(function(item) {
+                container.innerHTML += '<div class="sms-action-item"><span class="sms-action-dot" style="background:var(--success);"></span><span>' + escapeHtml(item.text) + '</span></div>';
+            });
+        }
+    }
+
+    function executeSmsAction(actionId, btn) {
+        btn.classList.add('done');
+        btn.innerHTML = '\u2713 ' + btn.textContent;
+
+        // Mark in state
+        state.smsChat.forEach(function(msg) {
+            if (msg.action && msg.action.buttons) {
+                msg.action.buttons.forEach(function(b) {
+                    if (b.id === actionId) b.done = true;
+                });
+            }
+        });
+
+        var responses = {
+            'sms-add-cal-party': "Done! Added \"Lily's Birthday Party\" to your Personal Calendar and Family Calendar for Saturday March 7 at 2pm.",
+            'sms-notify-josh-party': "Texted Josh: \"Heads up — Lily's birthday party for Emma is Saturday March 7 at 2pm at Jump Zone. Can you make it?\"",
+            'sms-rsvp-sarah': "Texted Sarah: \"Emma would love to come! No food allergies. See you Saturday at 2!\" \u2014 Want me to change this?"
+        };
+
+        var reply = responses[actionId] || 'Done!';
+        showTypingThenReply(reply);
+        showToast('SMS Action', reply.substring(0, 60) + '...', 'success');
+    }
+
+    // ==================== NATURAL LANGUAGE PROCESSOR ====================
+
+    function processUserMessage(text) {
+        var lower = text.toLowerCase().trim();
+
+        // ---- HOMEWORK ----
+        if (lower.includes('homework') || lower.includes('hw') || (lower.includes('emma') && lower.includes('assignment'))) {
+            if (lower.includes('mark') || lower.includes('done') || lower.includes('complete') || lower.includes('finish')) {
+                return handleMarkHomework(lower);
+            }
+            return handleHomeworkQuery(lower);
+        }
+
+        // ---- CALENDAR / SCHEDULE / TODAY ----
+        if (lower.includes('calendar') || lower.includes('schedule') || lower.includes("what's on") || lower.includes('whats on') ||
+            (lower.includes('today') && !lower.includes('school')) || lower.includes('tomorrow') || lower.includes('this week') || lower.includes('weekend')) {
+            return handleCalendarQuery(lower);
+        }
+
+        // ---- SCHOOL ----
+        if (lower.includes('school') || lower.includes('st. patrick') || lower.includes('st patrick') || lower.includes('newsletter') ||
+            lower.includes('ms. rodriguez') || lower.includes('ms rodriguez')) {
+            return handleSchoolQuery(lower);
+        }
+
+        // ---- FIELD TRIP / PERMISSION ----
+        if (lower.includes('field trip') || lower.includes('permission slip') || lower.includes('science museum')) {
+            showTypingThenReply("The Science Museum field trip is on March 20 at 8:30 AM. The permission slip needs to be returned by March 13. Josh also mentioned it in his last email — want me to set a reminder?", {
+                title: 'Field Trip Info',
+                desc: 'Permission slip due March 13.',
+                buttons: [
+                    { label: 'Set reminder for March 12', id: 'sms-remind-permission' },
+                    { label: 'Add to calendar', id: 'sms-add-fieldtrip' }
+                ]
+            });
+            return;
+        }
+
+        // ---- ADD TO CALENDAR / BOTH CALENDARS ----
+        if (lower.includes('add') && (lower.includes('calendar') || lower.includes('cal'))) {
+            return handleAddToCalendar(lower);
+        }
+
+        // ---- TEXT/NOTIFY JOSH ----
+        if ((lower.includes('text josh') || lower.includes('tell josh') || lower.includes('notify josh') || lower.includes('message josh') || lower.includes('let josh know'))) {
+            return handleTextJosh(lower);
+        }
+
+        // ---- RSVP ----
+        if (lower.includes('rsvp')) {
+            return handleRsvp(lower);
+        }
+
+        // ---- ACTION ITEMS ----
+        if (lower.includes('action item') || lower.includes('to do') || lower.includes('todo') || lower.includes('pending') || lower.includes('what do i need')) {
+            return handleActionItems();
+        }
+
+        // ---- WORK MESSAGES ----
+        if ((lower.includes('work') || lower.includes('slack') || lower.includes('office')) && (lower.includes('message') || lower.includes('new') || lower.includes('email') || lower.includes('update'))) {
+            return handleWorkMessages();
+        }
+
+        // ---- REMINDER ----
+        if (lower.includes('remind') || lower.includes('reminder')) {
+            return handleReminder(lower);
+        }
+
+        // ---- UNREAD / NEW MESSAGES ----
+        if (lower.includes('unread') || lower.includes('new message') || lower.includes('anything new') || lower.includes("what'd i miss") || lower.includes('what did i miss') || lower.includes('catch me up')) {
+            return handleUnreadSummary();
+        }
+
+        // ---- BIRTHDAY PARTY specifics ----
+        if (lower.includes('birthday') || lower.includes('lily') || lower.includes('jump zone') || lower.includes('party')) {
+            showTypingThenReply("Lily's birthday party is Saturday March 7 at 2pm at Jump Zone (1234 Fun Ave). It's a unicorn theme! Sarah Chen asked you to RSVP by Thursday. Currently on your Personal Calendar and Family Calendar.", {
+                title: 'Party Details',
+                desc: 'RSVP deadline: Thursday',
+                buttons: [
+                    { label: 'RSVP yes to Sarah', id: 'sms-rsvp-sarah-2' },
+                    { label: 'Text Josh about it', id: 'sms-notify-josh-party-2' }
+                ]
+            });
+            return;
+        }
+
+        // ---- DINNER / GRANDPARENTS ----
+        if (lower.includes('dinner') || lower.includes('grandparent') || lower.includes('mom') || lower.includes('olive garden')) {
+            showTypingThenReply("Mom texted asking about dinner Sunday at 5pm. She offered to come to you or meet at Olive Garden. Want me to reply?", {
+                title: 'Sunday Dinner',
+                desc: 'Grandparents want to see Emma',
+                buttons: [
+                    { label: 'Reply: Olive Garden works!', id: 'sms-reply-mom-og' },
+                    { label: 'Reply: Come to our place', id: 'sms-reply-mom-home' },
+                    { label: 'Add to family calendar', id: 'sms-add-dinner' }
+                ]
+            });
+            return;
+        }
+
+        // ---- SOCCER ----
+        if (lower.includes('soccer') || lower.includes('practice') || lower.includes('game') || lower.includes('coach')) {
+            showTypingThenReply("Soccer update:\n- Practice: Today at 4:30 PM (Emma's on your schedule)\n- Saturday game: 10:00 AM at Field B (moved from Field A for maintenance)\n- Josh is handling Tuesday practices, asked if you can do Thursday this week.\n\nCoach Williams also noted kids should bring extra water for Saturday.");
+            return;
+        }
+
+        // ---- DOCTOR ----
+        if (lower.includes('doctor') || lower.includes('dr. martinez') || lower.includes('appointment') || lower.includes('medical')) {
+            showTypingThenReply("You have an appointment with Dr. Martinez on March 10 at 10:30 AM at 456 Health Blvd, Suite 200. They ask you to arrive 15 min early. Need to reschedule? Call (555) 234-5678 at least 24 hours in advance.");
+            return;
+        }
+
+        // ---- BENEFITS / ENROLLMENT ----
+        if (lower.includes('benefit') || lower.includes('enrollment') || lower.includes('hr')) {
+            showTypingThenReply("HR sent a reminder: benefits open enrollment closes March 15. Key changes this year: new dental options, increased FSA limits, updated vision coverage. Log into the benefits portal to review. Want me to set a reminder before the deadline?", {
+                title: 'Benefits Deadline',
+                desc: 'Open enrollment closes March 15',
+                buttons: [
+                    { label: 'Remind me March 14', id: 'sms-remind-benefits' },
+                    { label: 'Add deadline to work cal', id: 'sms-add-benefits-cal' }
+                ]
+            });
+            return;
+        }
+
+        // ---- THANK YOU / OK / GREAT ----
+        if (lower.match(/^(thanks|thank you|ok|okay|great|perfect|got it|cool|nice|awesome|good|👍)/)) {
+            var acks = [
+                "You got it! I'm here whenever you need me.",
+                "Anytime! Just text me if anything comes up.",
+                "Happy to help! I'll keep monitoring everything.",
+                "No problem! I'll ping you if anything new comes in."
+            ];
+            showTypingThenReply(acks[Math.floor(Math.random() * acks.length)]);
+            return;
+        }
+
+        // ---- HI / HELLO ----
+        if (lower.match(/^(hi|hello|hey|sup|yo|good morning|good afternoon|good evening)/)) {
+            showTypingThenReply("Hey! Here's your quick status:\n\n" + state.unreadCount + " unread messages across channels\n" +
+                state.calendarEvents.filter(function(e) { return e.date === formatDate(new Date()); }).length + " events on today's calendar\n" +
+                state.familyActions.length + " pending action items\n\nWhat can I help with?");
+            return;
+        }
+
+        // ---- HELP ----
+        if (lower.includes('help') || lower.includes('what can you do') || lower.includes('commands')) {
+            showTypingThenReply("Here's what I can do:\n\n" +
+                "- Check homework: \"What's Emma's homework tonight?\"\n" +
+                "- Calendar: \"What's on my calendar today/tomorrow/this weekend?\"\n" +
+                "- School updates: \"What did the school send today?\"\n" +
+                "- Add events: \"Add the birthday party to both calendars\"\n" +
+                "- Notify people: \"Text Josh about the party\"\n" +
+                "- RSVP: \"RSVP yes to Lily's party\"\n" +
+                "- Action items: \"What are my action items?\"\n" +
+                "- Messages: \"Any new messages from work?\"\n" +
+                "- Reminders: \"Remind me about the permission slip\"\n" +
+                "- Mark done: \"Mark spelling homework as done\"\n\nJust text naturally — I'll figure out what you mean!");
+            return;
+        }
+
+        // ---- FALLBACK ----
+        showTypingThenReply("I'm not sure I understood that. Try asking about:\n- Homework, calendar, school updates\n- Action items or pending tasks\n- Specific events (birthday party, field trip, soccer)\n- Or tell me to text Josh, add something to a calendar, or set a reminder.\n\nText \"help\" for all my commands!");
+    }
+
+    // ---- HANDLER FUNCTIONS ----
+
+    function handleHomeworkQuery(lower) {
+        var tonight = '';
+        var dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+        var today = dayNames[new Date().getDay()];
+
+        if (lower.includes('tonight') || lower.includes('today') || lower.includes("what's emma")) {
+            var todayHw = state.homework.filter(function(h) { return h.due === today; });
+            if (todayHw.length === 0) {
+                tonight = "No homework due today (" + today + ")! ";
+                // Show next day
+                var tomorrowIdx = (new Date().getDay() + 1) % 7;
+                var tomorrowName = dayNames[tomorrowIdx];
+                var tomorrowHw = state.homework.filter(function(h) { return h.due === tomorrowName; });
+                if (tomorrowHw.length > 0) {
+                    tonight += "Tomorrow's homework:\n";
+                    tomorrowHw.forEach(function(h) {
+                        tonight += (h.done ? '\u2713' : '\u25CB') + ' ' + h.subject + ': ' + h.desc + '\n';
+                    });
+                }
+            } else {
+                tonight = "Emma's homework for " + today + ":\n\n";
+                todayHw.forEach(function(h) {
+                    tonight += (h.done ? '\u2713' : '\u25CB') + ' ' + h.subject + ': ' + h.desc + '\n';
+                });
+            }
+        } else {
+            tonight = "Emma's homework this week:\n\n";
+            state.homework.forEach(function(h) {
+                tonight += (h.done ? '\u2713' : '\u25CB') + ' ' + h.due + ' — ' + h.subject + ': ' + h.desc + '\n';
+            });
+            var done = state.homework.filter(function(h) { return h.done; }).length;
+            tonight += '\n' + done + '/' + state.homework.length + ' completed.';
+        }
+        showTypingThenReply(tonight.trim());
+    }
+
+    function handleMarkHomework(lower) {
+        var matched = null;
+        state.homework.forEach(function(h) {
+            if (lower.includes(h.subject.toLowerCase()) || lower.includes(h.desc.toLowerCase().substring(0, 15))) {
+                if (!h.done) matched = h;
+            }
+        });
+        if (matched) {
+            matched.done = true;
+            showTypingThenReply("Marked as done: " + matched.subject + " — " + matched.desc + "\n\n" +
+                state.homework.filter(function(h) { return h.done; }).length + "/" + state.homework.length + " homework items completed this week!");
+            showToast('Homework Done', matched.subject + ': ' + matched.desc, 'success');
+        } else {
+            // Try to mark next incomplete one
+            var next = state.homework.find(function(h) { return !h.done; });
+            if (next) {
+                next.done = true;
+                showTypingThenReply("Marked as done: " + next.subject + " — " + next.desc + " (next incomplete item).\n\n" +
+                    state.homework.filter(function(h) { return h.done; }).length + "/" + state.homework.length + " completed this week!");
+                showToast('Homework Done', next.subject + ': ' + next.desc, 'success');
+            } else {
+                showTypingThenReply("All homework is already marked as done! Emma's on top of it this week.");
+            }
+        }
+    }
+
+    function handleCalendarQuery(lower) {
+        var targetDate, label;
+        var today = new Date();
+
+        if (lower.includes('tomorrow')) {
+            targetDate = new Date(today);
+            targetDate.setDate(today.getDate() + 1);
+            label = 'Tomorrow';
+        } else if (lower.includes('weekend') || lower.includes('saturday') || lower.includes('sunday')) {
+            // Show Sat + Sun
+            var sat = new Date(today);
+            sat.setDate(today.getDate() + (6 - today.getDay()));
+            var sun = new Date(sat);
+            sun.setDate(sat.getDate() + 1);
+            var satStr = formatDate(sat);
+            var sunStr = formatDate(sun);
+            var weekendEvents = state.calendarEvents.filter(function(e) { return e.date === satStr || e.date === sunStr; });
+            if (weekendEvents.length === 0) {
+                showTypingThenReply("Your weekend is clear! No events on Saturday or Sunday. Want me to add something?");
+            } else {
+                var reply = "This weekend:\n\n";
+                weekendEvents.sort(function(a, b) { return a.date.localeCompare(b.date) || a.time.localeCompare(b.time); });
+                weekendEvents.forEach(function(e) {
+                    var dayLabel = e.date === satStr ? 'Sat' : 'Sun';
+                    reply += dayLabel + ' ' + e.time + ' — ' + e.title + ' (' + e.calendar + ')\n';
+                });
+                showTypingThenReply(reply.trim());
+            }
+            return;
+        } else if (lower.includes('this week')) {
+            var events = [];
+            for (var i = 0; i < 7; i++) {
+                var d = new Date(today);
+                d.setDate(today.getDate() + i);
+                var ds = formatDate(d);
+                state.calendarEvents.forEach(function(e) {
+                    if (e.date === ds) events.push({ event: e, dateStr: ds, dayName: d.toLocaleDateString('en-US', { weekday: 'short' }) });
+                });
+            }
+            if (events.length === 0) {
+                showTypingThenReply("Nothing on the calendar this week! That's unusual. Want to add something?");
+            } else {
+                var reply = "This week's schedule:\n\n";
+                events.forEach(function(item) {
+                    reply += item.dayName + ' ' + item.event.time + ' — ' + item.event.title + '\n';
+                });
+                showTypingThenReply(reply.trim());
+            }
+            return;
+        } else {
+            targetDate = today;
+            label = 'Today';
+        }
+
+        var dateStr = formatDate(targetDate);
+        var dayEvents = state.calendarEvents.filter(function(e) { return e.date === dateStr; });
+        if (dayEvents.length === 0) {
+            showTypingThenReply(label + "'s calendar is clear! No events scheduled.");
+        } else {
+            var reply = label + "'s schedule:\n\n";
+            dayEvents.sort(function(a, b) { return a.time.localeCompare(b.time); });
+            dayEvents.forEach(function(e) {
+                reply += e.time + ' — ' + e.title + ' (' + e.calendar + ' cal)\n';
+            });
+            showTypingThenReply(reply.trim());
+        }
+    }
+
+    function handleSchoolQuery() {
+        var reply = "Latest from St. Patrick School:\n\n";
+        state.schoolFeed.slice(0, 4).forEach(function(item) {
+            reply += '- ' + item.title + ': ' + item.desc + ' (' + item.date + ')\n';
+        });
+        reply += "\nWant details on any of these?";
+        showTypingThenReply(reply.trim());
+    }
+
+    function handleAddToCalendar(lower) {
+        var both = lower.includes('both');
+        var personal = lower.includes('personal') || both;
+        var family = lower.includes('family') || lower.includes('home') || both;
+        var work = lower.includes('work');
+
+        // Try to detect which event
+        var eventName = 'the event';
+        if (lower.includes('birthday') || lower.includes('party') || lower.includes('lily')) {
+            eventName = "Lily's Birthday Party (Sat March 7, 2pm)";
+        } else if (lower.includes('dinner') || lower.includes('grandparent')) {
+            eventName = "Dinner with Grandparents (Sun 5pm)";
+        } else if (lower.includes('soccer') || lower.includes('game')) {
+            eventName = "Soccer Game (Sat 10am, Field B)";
+        } else if (lower.includes('doctor') || lower.includes('appointment')) {
+            eventName = "Dr. Martinez Appointment (March 10, 10:30 AM)";
+        }
+
+        var cals = [];
+        if (personal) cals.push('Personal');
+        if (family) cals.push('Family');
+        if (work) cals.push('Work');
+        if (cals.length === 0) cals = ['Personal', 'Family'];
+
+        showTypingThenReply("Done! Added \"" + eventName + "\" to your " + cals.join(' + ') + " calendar" + (cals.length > 1 ? 's' : '') + ".");
+        showToast('Calendar Updated', eventName + ' added', 'success');
+    }
+
+    function handleTextJosh(lower) {
+        var about = '';
+        if (lower.includes('birthday') || lower.includes('party') || lower.includes('lily')) {
+            about = "Lily's birthday party for Emma is Saturday March 7 at 2pm at Jump Zone. Can you make it?";
+        } else if (lower.includes('soccer') || lower.includes('game')) {
+            about = "Saturday soccer game moved to 10am at Field B. Coach says bring extra water!";
+        } else if (lower.includes('dinner') || lower.includes('grandparent') || lower.includes('sunday')) {
+            about = "Mom wants to do dinner Sunday at 5pm. Olive Garden or our place? Let me know!";
+        } else if (lower.includes('field trip') || lower.includes('permission')) {
+            about = "Reminder: Emma's field trip permission slip is due March 13. Did you sign it?";
+        } else if (lower.includes('school') || lower.includes('homework')) {
+            about = "School update: Emma has spelling + science journal due Tuesday, math + reading Wednesday, book report outline Thursday.";
+        } else {
+            about = "Hey, quick update from LifeSync — checking in. Give me a call when you get a chance!";
+        }
+
+        showTypingThenReply("Texted Josh: \"" + about + "\"\n\nI'll let you know when he replies.", {
+            title: 'Text Sent to Josh',
+            desc: about.substring(0, 80) + '...',
+            buttons: [
+                { label: 'Edit and resend', id: 'sms-edit-josh-' + Date.now() }
+            ]
+        });
+        showToast('Text Sent', 'Message sent to Josh', 'success');
+    }
+
+    function handleRsvp(lower) {
+        var yes = lower.includes('yes') || lower.includes('accept') || lower.includes('confirm');
+        var no = lower.includes('no') || lower.includes('decline') || lower.includes('cancel');
+
+        if (lower.includes('lily') || lower.includes('birthday') || lower.includes('party') || lower.includes('sarah')) {
+            if (yes) {
+                showTypingThenReply("Texted Sarah Chen: \"Emma would love to come to Lily's party! No food allergies. See you Saturday at 2pm!\"\n\nI'll also add a reminder for Saturday morning to prep.");
+                showToast('RSVP Sent', 'Accepted Lily\'s birthday party', 'success');
+            } else if (no) {
+                showTypingThenReply("Texted Sarah Chen: \"Thanks so much for the invite! Unfortunately Emma can't make it this Saturday. Hope Lily has a great birthday!\"\n\nRemoved from calendars.");
+            } else {
+                showTypingThenReply("Got it. Do you want to RSVP yes or no to Lily's birthday party?", {
+                    title: 'RSVP to Lily\'s Party',
+                    desc: 'Saturday March 7 at 2pm',
+                    buttons: [
+                        { label: 'Yes, she can come!', id: 'sms-rsvp-yes-' + Date.now() },
+                        { label: 'No, can\'t make it', id: 'sms-rsvp-no-' + Date.now() }
+                    ]
+                });
+            }
+        } else {
+            showTypingThenReply("Which event do you want to RSVP to? I have:\n- Lily's Birthday Party (Sat March 7)\n- Dinner with Grandparents (Sunday)\n\nJust say which one!");
+        }
+    }
+
+    function handleActionItems() {
+        if (state.familyActions.length === 0) {
+            showTypingThenReply("You're all caught up! No pending action items. Nice work.");
+            return;
+        }
+        var reply = "Your pending action items (" + state.familyActions.length + "):\n\n";
+        state.familyActions.forEach(function(a, i) {
+            reply += (i + 1) + '. ' + a.title + ' — ' + a.desc + '\n';
+        });
+        reply += "\nText me to handle any of these (e.g., \"RSVP to Lily's party\" or \"remind me about the permission slip\").";
+        showTypingThenReply(reply.trim());
+    }
+
+    function handleWorkMessages() {
+        var workMsgs = state.messages.filter(function(m) {
+            return m.channel === 'work-email' || m.channel === 'slack';
+        }).sort(function(a, b) { return b.time - a.time; });
+
+        if (workMsgs.length === 0) {
+            showTypingThenReply("No work messages right now. Enjoy the quiet!");
+            return;
+        }
+        var unread = workMsgs.filter(function(m) { return m.unread; });
+        var reply = '';
+        if (unread.length > 0) {
+            reply = unread.length + " unread work message" + (unread.length > 1 ? 's' : '') + ":\n\n";
+            unread.slice(0, 5).forEach(function(m) {
+                var ch = CHANNELS[m.channel];
+                reply += '- ' + m.sender + ' (' + ch.name + '): ' + (m.subject || m.preview.substring(0, 50)) + '\n';
+            });
+        } else {
+            reply = "No new unread work messages. Recent:\n\n";
+            workMsgs.slice(0, 3).forEach(function(m) {
+                var ch = CHANNELS[m.channel];
+                reply += '- ' + m.sender + ' (' + ch.name + '): ' + (m.subject || m.preview.substring(0, 50)) + ' — ' + formatTimeAgo(m.time) + '\n';
+            });
+        }
+        showTypingThenReply(reply.trim());
+    }
+
+    function handleReminder(lower) {
+        var about = 'that';
+        if (lower.includes('permission') || lower.includes('field trip')) about = 'the permission slip (due March 13)';
+        else if (lower.includes('birthday') || lower.includes('party') || lower.includes('rsvp')) about = "RSVP to Lily's birthday party (due Thursday)";
+        else if (lower.includes('doctor') || lower.includes('appointment')) about = 'Dr. Martinez appointment (March 10)';
+        else if (lower.includes('benefit') || lower.includes('enrollment')) about = 'benefits enrollment deadline (March 15)';
+        else if (lower.includes('book report')) about = "Emma's book report outline (due Thursday)";
+
+        showTypingThenReply("Reminder set for " + about + ". I'll text you the day before so you don't forget.");
+        showToast('Reminder Set', about, 'success');
+    }
+
+    function handleUnreadSummary() {
+        var unread = state.messages.filter(function(m) { return m.unread; });
+        if (unread.length === 0) {
+            showTypingThenReply("You're all caught up! No unread messages across any channel.");
+            return;
+        }
+        var reply = state.unreadCount + " unread message" + (state.unreadCount > 1 ? 's' : '') + " across your channels:\n\n";
+        var byChannel = {};
+        unread.forEach(function(m) {
+            if (!byChannel[m.channel]) byChannel[m.channel] = [];
+            byChannel[m.channel].push(m);
+        });
+        Object.keys(byChannel).forEach(function(ch) {
+            var chName = CHANNELS[ch] ? CHANNELS[ch].name : ch;
+            reply += chName + ' (' + byChannel[ch].length + '):\n';
+            byChannel[ch].forEach(function(m) {
+                reply += '  - ' + m.sender + ': ' + (m.subject || m.preview.substring(0, 40)) + '\n';
+            });
+        });
+        reply += '\nWant me to go into detail on any of these?';
+        showTypingThenReply(reply.trim());
+    }
+
+    // ---- PROACTIVE SMS NOTIFICATIONS ----
+    // When the live simulation adds a new message, also send an SMS notification
+    var originalSimulateIncoming = simulateIncoming;
+    simulateIncoming = function() {
+        var prevCount = state.messages.length;
+        originalSimulateIncoming();
+        if (state.messages.length > prevCount) {
+            var newMsg = state.messages[0]; // newest is first after unshift
+            var ch = CHANNELS[newMsg.channel];
+            var smsText = "NEW from " + newMsg.sender + " (" + ch.name + "): " + (newMsg.subject ? newMsg.subject + " — " : '') + newMsg.preview;
+
+            // Auto-detect and suggest actions
+            var action = null;
+            var bodyLower = newMsg.body.toLowerCase();
+            if (bodyLower.includes('early release') || bodyLower.includes('dismissal') || bodyLower.includes('school')) {
+                action = {
+                    title: 'School Alert',
+                    desc: 'This may affect your schedule.',
+                    buttons: [
+                        { label: 'Add to calendar', id: 'sms-auto-cal-' + Date.now() },
+                        { label: 'Notify Josh', id: 'sms-auto-josh-' + Date.now() }
+                    ]
+                };
+            } else if (bodyLower.includes('game') || bodyLower.includes('practice') || bodyLower.includes('soccer')) {
+                action = {
+                    title: 'Sports Update',
+                    desc: 'Schedule change detected.',
+                    buttons: [
+                        { label: 'Update calendar', id: 'sms-auto-cal-' + Date.now() },
+                        { label: 'Tell Josh', id: 'sms-auto-josh-' + Date.now() }
+                    ]
+                };
+            } else if (bodyLower.includes('deadline') || bodyLower.includes('enrollment') || bodyLower.includes('due')) {
+                action = {
+                    title: 'Deadline Detected',
+                    desc: 'Want me to set a reminder?',
+                    buttons: [
+                        { label: 'Set reminder', id: 'sms-auto-remind-' + Date.now() },
+                        { label: 'Add to calendar', id: 'sms-auto-cal-' + Date.now() }
+                    ]
+                };
+            }
+
+            addSmsBubble('incoming', smsText, action);
+
+            // Update SMS badge
+            var badge = $('#smsBadge');
+            if (badge && state.currentView !== 'sms') {
+                var count = parseInt(badge.textContent || '0', 10) + 1;
+                badge.textContent = count;
+                badge.style.display = 'inline-block';
+            }
+        }
+    };
+
     // ==================== INIT ====================
 
     function init() {
@@ -1234,6 +1933,7 @@
         initModals();
         initInboxFilters();
         initSearch();
+        initSmsChat();
         renderDashboard();
 
         // Start live simulation — new message every 30-60 seconds

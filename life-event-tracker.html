@@ -27,6 +27,11 @@
                 <span class="nav-label">Unified Inbox</span>
                 <span class="nav-badge" id="inboxBadge">0</span>
             </li>
+            <li class="nav-item" data-view="sms">
+                <span class="nav-icon">&#128172;</span>
+                <span class="nav-label">SMS Chat</span>
+                <span class="nav-badge" id="smsBadge" style="display:none;">0</span>
+            </li>
             <li class="nav-item" data-view="channels">
                 <span class="nav-icon">&#128225;</span>
                 <span class="nav-label">Channels</span>
@@ -188,6 +193,72 @@
                 </div>
                 <div class="detail-content" id="detailContent">
                     <!-- Populated by JS -->
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== SMS CHAT VIEW ==================== -->
+        <section class="view" id="view-sms">
+            <div class="sms-container">
+                <div class="sms-phone">
+                    <div class="sms-phone-header">
+                        <div class="sms-phone-status-bar">
+                            <span>9:41</span>
+                            <span class="sms-phone-notch"></span>
+                            <span class="sms-phone-icons">&#128246; 100%</span>
+                        </div>
+                        <div class="sms-phone-nav">
+                            <span class="sms-phone-back">&lt;</span>
+                            <div class="sms-phone-contact">
+                                <div class="sms-phone-avatar">LS</div>
+                                <div>
+                                    <div class="sms-phone-name">LifeSync</div>
+                                    <div class="sms-phone-subtitle">AI Assistant</div>
+                                </div>
+                            </div>
+                            <span class="sms-phone-info">&#9432;</span>
+                        </div>
+                    </div>
+                    <div class="sms-messages" id="smsMessages">
+                        <!-- Populated by JS -->
+                    </div>
+                    <div class="sms-input-bar">
+                        <button class="sms-attach-btn" id="smsQuickActions" title="Quick actions">+</button>
+                        <input type="text" id="smsInput" placeholder="Text LifeSync..." autocomplete="off">
+                        <button class="sms-send-btn" id="smsSendBtn">&#9650;</button>
+                    </div>
+                </div>
+                <div class="sms-sidebar-panel">
+                    <div class="sms-help-card">
+                        <h3>Talk to LifeSync</h3>
+                        <p>Text naturally — LifeSync understands context and takes action.</p>
+                    </div>
+                    <div class="sms-help-card">
+                        <h3>Try saying...</h3>
+                        <div class="sms-suggestions" id="smsSuggestions">
+                            <button class="sms-suggestion-btn">What's Emma's homework tonight?</button>
+                            <button class="sms-suggestion-btn">What's on my calendar today?</button>
+                            <button class="sms-suggestion-btn">Add the birthday party to both calendars</button>
+                            <button class="sms-suggestion-btn">Text Josh about the birthday party Saturday</button>
+                            <button class="sms-suggestion-btn">What did the school send today?</button>
+                            <button class="sms-suggestion-btn">When is the field trip?</button>
+                            <button class="sms-suggestion-btn">Remind me about the permission slip</button>
+                            <button class="sms-suggestion-btn">What are my action items?</button>
+                            <button class="sms-suggestion-btn">Mark spelling homework as done</button>
+                            <button class="sms-suggestion-btn">What's happening this weekend?</button>
+                            <button class="sms-suggestion-btn">RSVP yes to Lily's party</button>
+                            <button class="sms-suggestion-btn">Any new messages from work?</button>
+                        </div>
+                    </div>
+                    <div class="sms-help-card">
+                        <h3>Recent Actions</h3>
+                        <div class="sms-recent-actions" id="smsRecentActions">
+                            <div class="sms-action-item">
+                                <span class="sms-action-dot" style="background:var(--success);"></span>
+                                <span>Waiting for your first command...</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>
