@@ -128,6 +128,7 @@ Import each workflow JSON file in order. After importing each one, you'll need t
 | `TWILIO_CREDENTIAL_ID` | Select your "Twilio" credential |
 | `ANTHROPIC_CREDENTIAL_ID` | Select your "Anthropic API Key" credential |
 | `GSHEETS_CREDENTIAL_ID` | Select your "Google Sheets" credential |
+| `JOSH_PHONE_NUMBER` | Josh's phone number for co-parent notifications (e.g., `+15559876543`) — used in Workflow 10 |
 
 ### Import Order:
 
@@ -180,6 +181,25 @@ Import each workflow JSON file in order. After importing each one, you'll need t
 1. Import `08-twilio-notify.json`
 2. Update the Twilio phone number and your phone number
 3. **Activate** the workflow
+
+#### Workflow 09: Proactive Outreach Engine
+1. Import `09-proactive-outreach.json`
+2. Update all placeholders (Twilio numbers, phone numbers, credentials)
+3. Adjust cron times if needed:
+   - **6:00 AM** — Morning check (reminders, conflicts, alerts) — runs before the 7am digest
+   - **6:00 PM** — Evening follow-up (nudges for unresolved action items)
+   - **8:00 PM Sunday** — Week ahead preview
+4. The **Real-Time Alert Webhook** (`/webhook/lifesync-alert`) is called by other workflows for urgent items (schedule conflicts, cancellations, etc.)
+5. **Activate** the workflow
+
+#### Workflow 10: Auto-Action & Notification
+1. Import `10-auto-action-notify.json`
+2. Update all placeholders, including:
+   - `JOSH_PHONE_NUMBER` — Josh's phone number for co-parent notifications
+   - The webhook URL for the Reminder Workflow trigger
+3. Update the `WEBHOOK_BASE_URL` in n8n environment variables, or replace the URL in the "Trigger Reminder Workflow" node
+4. **Activate** the workflow
+5. **Note**: Workflows 02 (Gmail) and 07 (SMS Monitor) have been updated to call this workflow automatically when they detect events with enough detail to act on
 
 ---
 
@@ -325,9 +345,16 @@ Google Messages (your texts)          Gmail / Calendar / Slack
                                    v                    v
                               Claude AI (analyze, classify, parse)
                                    |                    |
-                                   v                    v
-                              Twilio SMS ──────> Google Messages
-                              (LifeSync contact replies to you)
+                          ┌────────┴────────┐           |
+                          v                 v           v
+                   Event detected?    Twilio SMS ──> Google Messages
+                          |           (notify you)
+                          v
+                   WF10: Auto-Action
+                   - Add to calendar
+                   - Notify Josh
+                   - Set reminders
+                   - Text you what it did
 
    You text LifeSync ──> Twilio webhook ──> n8n Workflow 01
                                             (Claude conversation)
@@ -338,4 +365,10 @@ Google Messages (your texts)          Gmail / Calendar / Slack
                                             - Set reminders
                                             - Notify Josh
                                             - RSVP
+
+   Proactive Outreach (WF09):
+   ┌─ 6am ── Morning alerts (conflicts, upcoming events, reminders)
+   ├─ 6pm ── Evening follow-ups (unresolved action items)
+   ├─ Sun 8pm ── Week ahead preview
+   └─ Real-time ── Urgent alerts via webhook from any workflow
 ```

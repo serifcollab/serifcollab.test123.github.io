@@ -1,0 +1,610 @@
+{
+  "name": "09 - LifeSync Proactive Outreach Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * *"
+            }
+          ]
+        }
+      },
+      "id": "morning-cron",
+      "name": "Morning Check (6am)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 200],
+      "notes": "Runs at 6:00 AM daily. Checks for upcoming reminders, schedule conflicts, and pending follow-ups. Runs BEFORE the 7am daily digest so alerts go out first."
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 20 * * 0"
+            }
+          ]
+        }
+      },
+      "id": "weekly-cron",
+      "name": "Sunday Evening Preview (8pm)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 500],
+      "notes": "Runs Sunday at 8:00 PM. Sends a preview of the upcoming week."
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 18 * * *"
+            }
+          ]
+        }
+      },
+      "id": "evening-cron",
+      "name": "Evening Follow-up Check (6pm)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 800],
+      "notes": "Runs at 6:00 PM daily. Checks for action items that haven't been addressed and sends follow-up nudges."
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lifesync-alert",
+        "options": {
+          "responseMode": "onReceived"
+        }
+      },
+      "id": "realtime-webhook",
+      "name": "Real-Time Alert Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 1100],
+      "notes": "Called by other workflows when an urgent or time-sensitive item is detected. Body: { type: 'conflict|urgent|deadline|weather', details: object, source: string }"
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": { "value": "1NMy59UU_Ww__fiOwI-BM99X7cLTK3FZGFm1CdmrbQEA" },
+        "sheetName": { "value": "EventLog" },
+        "options": {}
+      },
+      "id": "read-event-log",
+      "name": "Read Event Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [460, 200],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GSHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": { "value": "1NMy59UU_Ww__fiOwI-BM99X7cLTK3FZGFm1CdmrbQEA" },
+        "sheetName": { "value": "Reminders" },
+        "options": {}
+      },
+      "id": "read-reminders",
+      "name": "Read Reminders",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [460, 350],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GSHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "calendarId": "primary",
+        "options": {
+          "timeMin": "={{ new Date().toISOString() }}",
+          "timeMax": "={{ new Date(Date.now() + 2 * 86400000).toISOString() }}"
+        }
+      },
+      "id": "get-upcoming-events",
+      "name": "Get Next 48h Calendar Events",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.1,
+      "position": [460, 50],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "GCAL_CREDENTIAL_ID",
+          "name": "Google Calendar"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const calEvents = $('Get Next 48h Calendar Events').all().map(i => i.json);\nconst logItems = $('Read Event Log').all().map(i => i.json);\nconst reminders = $('Read Reminders').all().map(i => i.json);\n\nconst now = new Date();\nconst today = now.toISOString().split('T')[0];\nconst tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];\n\n// 1. REMINDERS: Find events happening today/tomorrow that need prep reminders\nconst upcomingEvents = calEvents.filter(e => {\n  const eventDate = (e.start?.dateTime || e.start?.date || '').substring(0, 10);\n  return eventDate === today || eventDate === tomorrow;\n}).map(e => {\n  const start = e.start?.dateTime ? new Date(e.start.dateTime) : null;\n  const hoursUntil = start ? (start.getTime() - now.getTime()) / 3600000 : null;\n  return {\n    title: e.summary || 'Untitled',\n    date: (e.start?.dateTime || e.start?.date || '').substring(0, 10),\n    time: start ? start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : 'All day',\n    location: e.location || '',\n    hoursUntil: hoursUntil ? Math.round(hoursUntil * 10) / 10 : null\n  };\n});\n\n// 2. SCHEDULE CONFLICTS: Check for overlapping events\nconst timedEvents = calEvents.filter(e => e.start?.dateTime && e.end?.dateTime);\nconst conflicts = [];\nfor (let i = 0; i < timedEvents.length; i++) {\n  for (let j = i + 1; j < timedEvents.length; j++) {\n    const a = timedEvents[i];\n    const b = timedEvents[j];\n    const aStart = new Date(a.start.dateTime).getTime();\n    const aEnd = new Date(a.end.dateTime).getTime();\n    const bStart = new Date(b.start.dateTime).getTime();\n    const bEnd = new Date(b.end.dateTime).getTime();\n    if (aStart < bEnd && bStart < aEnd) {\n      conflicts.push({\n        event1: a.summary || 'Untitled',\n        event2: b.summary || 'Untitled',\n        time1: new Date(a.start.dateTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),\n        time2: new Date(b.start.dateTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })\n      });\n    }\n  }\n}\n\n// 3. PENDING ACTION ITEMS: From event log in last 48h with no resolution\nconst twoDaysAgo = new Date(Date.now() - 2 * 86400000).toISOString();\nconst pendingActions = logItems.filter(item =>\n  item.timestamp > twoDaysAgo &&\n  item.has_action_item === 'true' &&\n  item.action_item\n);\n\n// 4. PENDING REMINDERS: Reminders that are still pending\nconst pendingReminders = reminders.filter(r =>\n  r.status === 'pending' &&\n  r.scheduled_for\n);\n\n// Build the proactive outreach prompt\nconst promptData = {\n  today: now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }),\n  upcomingEvents,\n  conflicts,\n  pendingActions,\n  pendingReminders\n};\n\n// Determine if there's anything worth sending\nconst hasContent = conflicts.length > 0 || pendingActions.length > 0 ||\n  upcomingEvents.some(e => e.hoursUntil !== null && e.hoursUntil > 0 && e.hoursUntil <= 3);\n\nconst prompt = `You are LifeSync, a proactive family life assistant. Analyze the following and create a short, helpful text message ONLY if there is something actionable or important. If nothing needs attention, respond with exactly \"NO_OUTREACH_NEEDED\".\n\nContext: Parent managing family with co-parent Josh, daughter Emma at St. Patrick School.\nToday: ${promptData.today}\n\nUpcoming Events (next 48h):\n${JSON.stringify(promptData.upcomingEvents, null, 2)}\n\nSchedule Conflicts Detected:\n${conflicts.length > 0 ? JSON.stringify(conflicts, null, 2) : 'None'}\n\nPending Action Items (unresolved from last 48h):\n${pendingActions.length > 0 ? pendingActions.map(a => `- [${a.source}] ${a.action_item} (from: ${a.from || a.subject})`).join('\\n') : 'None'}\n\nPending Reminders:\n${pendingReminders.length > 0 ? pendingReminders.map(r => `- ${r.message} (scheduled: ${r.scheduled_for})`).join('\\n') : 'None'}\n\nRules:\n- Events within 3 hours: Send a heads-up with time and location\n- Schedule conflicts: ALWAYS alert, this is high priority\n- Pending actions older than 24h: Gentle nudge to address them\n- Keep the message SHORT and texting-style (under 400 chars)\n- Use emojis sparingly\n- Be warm but direct\n- Start with a context label like \"Heads up\" or \"Reminder\" or \"Conflict alert\"`;\n\nreturn [{ json: { prompt, hasContent, promptData } }];"
+      },
+      "id": "build-morning-check",
+      "name": "Build Morning Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 200]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $credentials.httpHeaderAuth.value }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 512,\n  \"messages\": [{\"role\": \"user\", \"content\": {{ JSON.stringify($json.prompt) }}}]\n}",
+        "options": {}
+      },
+      "id": "claude-morning",
+      "name": "Claude Morning Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.content[0].text }}",
+              "rightValue": "NO_OUTREACH_NEEDED",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ]
+        }
+      },
+      "id": "needs-outreach",
+      "name": "Needs Outreach?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1140, 200]
+    },
+    {
+      "parameters": {
+        "from": "YOUR_TWILIO_PHONE_NUMBER",
+        "to": "YOUR_PHONE_NUMBER",
+        "message": "={{ $('Claude Morning Analysis').item.json.content[0].text }}"
+      },
+      "id": "send-morning-alert",
+      "name": "Send Morning Alert SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [1360, 200],
+      "credentials": {
+        "twilioApi": {
+          "id": "TWILIO_CREDENTIAL_ID",
+          "name": "Twilio"
+        }
+      },
+      "notes": "SETUP: Replace YOUR_TWILIO_PHONE_NUMBER and YOUR_PHONE_NUMBER"
+    },
+    {
+      "parameters": {
+        "calendarId": "primary",
+        "options": {
+          "timeMin": "={{ new Date().toISOString() }}",
+          "timeMax": "={{ new Date(Date.now() + 7 * 86400000).toISOString() }}"
+        }
+      },
+      "id": "get-week-events",
+      "name": "Get Next Week Calendar Events",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.1,
+      "position": [460, 500],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "GCAL_CREDENTIAL_ID",
+          "name": "Google Calendar"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const calEvents = $('Get Next Week Calendar Events').all().map(i => i.json);\n\nconst eventsByDay = {};\nconst dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];\n\ncalEvents.forEach(e => {\n  const dateStr = (e.start?.dateTime || e.start?.date || '').substring(0, 10);\n  const day = new Date(dateStr + 'T12:00:00').getDay();\n  const dayLabel = dayNames[day];\n  if (!eventsByDay[dayLabel]) eventsByDay[dayLabel] = [];\n  const time = e.start?.dateTime\n    ? new Date(e.start.dateTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })\n    : 'All day';\n  eventsByDay[dayLabel].push(`${time}: ${e.summary || 'Untitled'}`);\n});\n\nlet weekSummary = '';\nfor (const day of dayNames) {\n  if (eventsByDay[day]) {\n    weekSummary += `${day}:\\n${eventsByDay[day].map(e => `  - ${e}`).join('\\n')}\\n`;\n  }\n}\n\nif (!weekSummary) weekSummary = 'No events scheduled.';\n\nconst prompt = `You are LifeSync. Create a brief, friendly Sunday evening \"week ahead\" preview text message for a busy parent. Keep it under 600 characters, highlight the busiest days, mention any potential conflicts, and note anything that might need prep (school events, appointments, etc).\n\nUpcoming Week:\n${weekSummary}\n\nStart with something like \"Week ahead\" and keep it casual/texting style with a few emojis.`;\n\nreturn [{ json: { prompt } }];"
+      },
+      "id": "build-weekly-preview",
+      "name": "Build Weekly Preview",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 500]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $credentials.httpHeaderAuth.value }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 512,\n  \"messages\": [{\"role\": \"user\", \"content\": {{ JSON.stringify($json.prompt) }}}]\n}",
+        "options": {}
+      },
+      "id": "claude-weekly",
+      "name": "Claude Weekly Preview",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 500],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "from": "YOUR_TWILIO_PHONE_NUMBER",
+        "to": "YOUR_PHONE_NUMBER",
+        "message": "={{ $json.content[0].text }}"
+      },
+      "id": "send-weekly-sms",
+      "name": "Send Weekly Preview SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [1140, 500],
+      "credentials": {
+        "twilioApi": {
+          "id": "TWILIO_CREDENTIAL_ID",
+          "name": "Twilio"
+        }
+      },
+      "notes": "SETUP: Replace YOUR_TWILIO_PHONE_NUMBER and YOUR_PHONE_NUMBER"
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": { "value": "1NMy59UU_Ww__fiOwI-BM99X7cLTK3FZGFm1CdmrbQEA" },
+        "sheetName": { "value": "EventLog" },
+        "options": {}
+      },
+      "id": "read-evening-log",
+      "name": "Read Evening Event Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [460, 800],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GSHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const logItems = $('Read Evening Event Log').all().map(i => i.json);\n\nconst now = new Date();\nconst todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();\n\n// Find action items from today that are still unresolved\nconst todayActions = logItems.filter(item =>\n  item.timestamp >= todayStart &&\n  item.has_action_item === 'true' &&\n  item.action_item\n);\n\n// Find items from previous days that are still pending (older than 24h)\nconst olderCutoff = new Date(Date.now() - 86400000).toISOString();\nconst overdueActions = logItems.filter(item =>\n  item.timestamp < olderCutoff &&\n  item.has_action_item === 'true' &&\n  item.action_item\n).slice(-5); // Last 5 overdue items max\n\nconst hasFollowUps = todayActions.length > 0 || overdueActions.length > 0;\n\nlet prompt = '';\nif (hasFollowUps) {\n  prompt = `You are LifeSync doing an evening check-in. Create a brief, friendly text message reminding the parent about unfinished items. Be gentle, not naggy. Keep under 400 characters.\n\nToday's Unfinished Action Items:\n${todayActions.length > 0 ? todayActions.map(a => `- [${a.source}] ${a.action_item}`).join('\\n') : 'None'}\n\nOverdue Items (from earlier):\n${overdueActions.length > 0 ? overdueActions.map(a => `- [${a.source}] ${a.action_item} (from ${a.from || a.subject})`).join('\\n') : 'None'}\n\nIf nothing important is pending, respond with \"NO_OUTREACH_NEEDED\". Only send if there are genuinely important items the parent should handle. Start with something like \"Evening check-in\" and keep it warm.`;\n} else {\n  prompt = 'NO_OUTREACH_NEEDED';\n}\n\nreturn [{ json: { prompt, hasFollowUps } }];"
+      },
+      "id": "build-evening-check",
+      "name": "Build Evening Follow-up Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 800]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.hasFollowUps }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "id": "has-followups",
+      "name": "Has Follow-ups?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [920, 800]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $credentials.httpHeaderAuth.value }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20241022\",\n  \"max_tokens\": 400,\n  \"messages\": [{\"role\": \"user\", \"content\": {{ JSON.stringify($json.prompt) }}}]\n}",
+        "options": {}
+      },
+      "id": "claude-evening",
+      "name": "Claude Evening Follow-up",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, 800],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.content[0].text }}",
+              "rightValue": "NO_OUTREACH_NEEDED",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ]
+        }
+      },
+      "id": "evening-needs-send",
+      "name": "Worth Sending?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1360, 800]
+    },
+    {
+      "parameters": {
+        "from": "YOUR_TWILIO_PHONE_NUMBER",
+        "to": "YOUR_PHONE_NUMBER",
+        "message": "={{ $('Claude Evening Follow-up').item.json.content[0].text }}"
+      },
+      "id": "send-evening-sms",
+      "name": "Send Evening Follow-up SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [1580, 800],
+      "credentials": {
+        "twilioApi": {
+          "id": "TWILIO_CREDENTIAL_ID",
+          "name": "Twilio"
+        }
+      },
+      "notes": "SETUP: Replace YOUR_TWILIO_PHONE_NUMBER and YOUR_PHONE_NUMBER"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.item.json.body;\nconst alertType = body.type || 'general';\nconst details = body.details || {};\nconst source = body.source || 'unknown';\n\nconst typeLabels = {\n  conflict: 'Schedule Conflict',\n  urgent: 'Urgent Alert',\n  deadline: 'Deadline Approaching',\n  rsvp_needed: 'RSVP Needed',\n  pickup_change: 'Pickup Change',\n  cancellation: 'Cancellation'\n};\n\nconst prompt = `You are LifeSync sending a REAL-TIME alert to a busy parent. This is time-sensitive. Create a short, clear text message (under 300 chars).\n\nAlert Type: ${typeLabels[alertType] || alertType}\nSource: ${source}\nDetails: ${JSON.stringify(details)}\n\nBe direct and clear. Start with an appropriate emoji and the alert type. Include the key details and any immediate action needed.`;\n\nreturn [{ json: { prompt, alertType, details, source } }];"
+      },
+      "id": "build-realtime-alert",
+      "name": "Build Real-Time Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 1100]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $credentials.httpHeaderAuth.value }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20241022\",\n  \"max_tokens\": 300,\n  \"messages\": [{\"role\": \"user\", \"content\": {{ JSON.stringify($json.prompt) }}}]\n}",
+        "options": {}
+      },
+      "id": "claude-realtime",
+      "name": "Claude Real-Time Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 1100],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "from": "YOUR_TWILIO_PHONE_NUMBER",
+        "to": "YOUR_PHONE_NUMBER",
+        "message": "={{ $json.content[0].text }}"
+      },
+      "id": "send-realtime-sms",
+      "name": "Send Real-Time Alert SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [920, 1100],
+      "credentials": {
+        "twilioApi": {
+          "id": "TWILIO_CREDENTIAL_ID",
+          "name": "Twilio"
+        }
+      },
+      "notes": "SETUP: Replace YOUR_TWILIO_PHONE_NUMBER and YOUR_PHONE_NUMBER"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "value": "1NMy59UU_Ww__fiOwI-BM99X7cLTK3FZGFm1CdmrbQEA" },
+        "sheetName": { "value": "EventLog" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ new Date().toISOString() }}",
+            "source": "=lifesync_alert_{{ $('Build Real-Time Alert').item.json.alertType }}",
+            "from": "LifeSync",
+            "subject": "=Real-time alert: {{ $('Build Real-Time Alert').item.json.alertType }}",
+            "summary": "={{ $json.content[0].text }}",
+            "category": "=alert",
+            "priority": "high",
+            "has_event": "false",
+            "has_action_item": "true",
+            "action_item": "=Alert sent: {{ $('Build Real-Time Alert').item.json.alertType }}"
+          }
+        }
+      },
+      "id": "log-alert",
+      "name": "Log Alert to Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1140, 1100],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GSHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Morning Check (6am)": {
+      "main": [
+        [
+          { "node": "Read Event Log", "type": "main", "index": 0 },
+          { "node": "Read Reminders", "type": "main", "index": 0 },
+          { "node": "Get Next 48h Calendar Events", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Get Next 48h Calendar Events": {
+      "main": [
+        [{ "node": "Build Morning Check", "type": "main", "index": 0 }]
+      ]
+    },
+    "Read Event Log": {
+      "main": [
+        [{ "node": "Build Morning Check", "type": "main", "index": 0 }]
+      ]
+    },
+    "Read Reminders": {
+      "main": [
+        [{ "node": "Build Morning Check", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Morning Check": {
+      "main": [
+        [{ "node": "Claude Morning Analysis", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude Morning Analysis": {
+      "main": [
+        [{ "node": "Needs Outreach?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Needs Outreach?": {
+      "main": [
+        [{ "node": "Send Morning Alert SMS", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Sunday Evening Preview (8pm)": {
+      "main": [
+        [{ "node": "Get Next Week Calendar Events", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Next Week Calendar Events": {
+      "main": [
+        [{ "node": "Build Weekly Preview", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Weekly Preview": {
+      "main": [
+        [{ "node": "Claude Weekly Preview", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude Weekly Preview": {
+      "main": [
+        [{ "node": "Send Weekly Preview SMS", "type": "main", "index": 0 }]
+      ]
+    },
+    "Evening Follow-up Check (6pm)": {
+      "main": [
+        [{ "node": "Read Evening Event Log", "type": "main", "index": 0 }]
+      ]
+    },
+    "Read Evening Event Log": {
+      "main": [
+        [{ "node": "Build Evening Follow-up Check", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Evening Follow-up Check": {
+      "main": [
+        [{ "node": "Has Follow-ups?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has Follow-ups?": {
+      "main": [
+        [{ "node": "Claude Evening Follow-up", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Claude Evening Follow-up": {
+      "main": [
+        [{ "node": "Worth Sending?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Worth Sending?": {
+      "main": [
+        [{ "node": "Send Evening Follow-up SMS", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Real-Time Alert Webhook": {
+      "main": [
+        [{ "node": "Build Real-Time Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Real-Time Alert": {
+      "main": [
+        [{ "node": "Claude Real-Time Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude Real-Time Alert": {
+      "main": [
+        [
+          { "node": "Send Real-Time Alert SMS", "type": "main", "index": 0 },
+          { "node": "Log Alert to Sheet", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [{ "name": "LifeSync" }]
+}

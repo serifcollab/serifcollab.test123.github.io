@@ -154,6 +154,39 @@
         }
       },
       "notes": "Sheet ID configured with your Google Sheet ID"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.has_event }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "id": "auto-action-check",
+      "name": "Has Auto-Actionable Event?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1320, 450]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.WEBHOOK_BASE_URL || 'https://your-n8n.app.n8n.cloud' }}/webhook/lifesync-auto-action",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"source\": \"gmail\",\n  \"from\": {{ JSON.stringify($json.from) }},\n  \"subject\": {{ JSON.stringify($json.subject) }},\n  \"summary\": {{ JSON.stringify($json.summary) }},\n  \"category\": {{ JSON.stringify($json.category) }},\n  \"priority\": {{ JSON.stringify($json.priority) }},\n  \"event_details\": {{ JSON.stringify($json.event_details || null) }},\n  \"suggested_actions\": [{{ $json.has_action_item ? '\"set_reminder\"' : '' }}{{ $json.notify_josh ? ', \"notify_josh\"' : '' }}],\n  \"original_message\": {{ JSON.stringify($json.subject) }},\n  \"notify_josh\": {{ $json.notify_josh || false }}\n}",
+        "options": {}
+      },
+      "id": "trigger-auto-action",
+      "name": "Trigger Auto-Action (WF10)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1540, 450],
+      "notes": "SETUP: Update the webhook URL to match your n8n instance"
     }
   ],
   "connections": {
@@ -189,6 +222,17 @@
     "Format SMS Message": {
       "main": [
         [{ "node": "Send SMS via Twilio", "type": "main", "index": 0 }]
+      ]
+    },
+    "Log to Google Sheet": {
+      "main": [
+        [{ "node": "Has Auto-Actionable Event?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has Auto-Actionable Event?": {
+      "main": [
+        [{ "node": "Trigger Auto-Action (WF10)", "type": "main", "index": 0 }],
+        []
       ]
     }
   },
