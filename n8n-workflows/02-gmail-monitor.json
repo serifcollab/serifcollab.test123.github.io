@@ -25,7 +25,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const email = $input.item.json;\n\n// Extract key fields\nconst from = email.from?.value?.[0]?.address || email.from || 'Unknown';\nconst subject = email.subject || 'No Subject';\nconst body = (email.text || email.snippet || '').substring(0, 2000); // Limit body size\nconst date = email.date || new Date().toISOString();\n\nreturn [{\n  json: {\n    from,\n    subject,\n    body,\n    date,\n    emailId: email.id,\n    promptText: `From: ${from}\\nSubject: ${subject}\\nDate: ${date}\\n\\nBody:\\n${body}`\n  }\n}];"
+        "jsCode": "const email = $input.item.json;\n\n// Extract key fields\nconst from = email.from?.value?.[0]?.address || email.from || 'Unknown';\nconst subject = email.subject || 'No Subject';\nconst body = (email.text || email.snippet || '').substring(0, 2000); // Limit body size\nconst date = email.date || new Date().toISOString();\n\n// Detect Blackbaud / school portal emails\nconst fromLower = from.toLowerCase();\nconst subjectLower = subject.toLowerCase();\nconst isSchoolPortal = fromLower.includes('myschoolapp') || fromLower.includes('blackbaud') || fromLower.includes('stpcs') || subjectLower.includes('blackbaud') || subjectLower.includes('myschoolapp');\n\nreturn [{\n  json: {\n    from,\n    subject,\n    body,\n    date,\n    emailId: email.id,\n    isSchoolPortal,\n    promptText: `From: ${from}\\nSubject: ${subject}\\nDate: ${date}\\n\\nBody:\\n${body}`\n  }\n}];"
       },
       "id": "extract-email",
       "name": "Extract Email Fields",
@@ -65,7 +65,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const response = $input.item.json;\nconst emailData = $('Extract Email Fields').item.json;\nlet parsed;\n\ntry {\n  parsed = JSON.parse(response.content[0].text);\n} catch (e) {\n  // Try to extract JSON from the response\n  const match = response.content[0].text.match(/\\{[\\s\\S]*\\}/);\n  if (match) {\n    parsed = JSON.parse(match[0]);\n  } else {\n    parsed = {\n      summary: 'Could not parse email',\n      category: 'unknown',\n      priority: 'low',\n      has_event: false,\n      has_action_item: false,\n      notify_josh: false\n    };\n  }\n}\n\nreturn [{\n  json: {\n    ...emailData,\n    ...parsed,\n    timestamp: new Date().toISOString(),\n    source: 'gmail'\n  }\n}];"
+        "jsCode": "const response = $input.item.json;\nconst emailData = $('Extract Email Fields').item.json;\nlet parsed;\n\ntry {\n  parsed = JSON.parse(response.content[0].text);\n} catch (e) {\n  // Try to extract JSON from the response\n  const match = response.content[0].text.match(/\\{[\\s\\S]*\\}/);\n  if (match) {\n    parsed = JSON.parse(match[0]);\n  } else {\n    parsed = {\n      summary: 'Could not parse email',\n      category: 'unknown',\n      priority: 'low',\n      has_event: false,\n      has_action_item: false,\n      notify_josh: false\n    };\n  }\n}\n\n// Blackbaud / school portal emails are always at least medium priority\nif (emailData.isSchoolPortal && parsed.priority === 'low') {\n  parsed.priority = 'medium';\n}\nif (emailData.isSchoolPortal) {\n  parsed.category = 'school';\n}\n\nreturn [{\n  json: {\n    ...emailData,\n    ...parsed,\n    timestamp: new Date().toISOString(),\n    source: emailData.isSchoolPortal ? 'blackbaud' : 'gmail'\n  }\n}];"
       },
       "id": "parse-classification",
       "name": "Parse Classification",
