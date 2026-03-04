@@ -28,24 +28,22 @@
     },
     {
       "parameters": {
-        "chatId": "={{ $('Reminder Webhook').item.json.body.chatId || 'YOUR_TELEGRAM_CHAT_ID' }}",
-        "text": "=\\u23F0 *Reminder*\\n\\n{{ $('Reminder Webhook').item.json.body.message }}",
-        "additionalFields": {
-          "parse_mode": "Markdown"
-        }
+        "from": "YOUR_TWILIO_PHONE_NUMBER",
+        "to": "={{ $('Reminder Webhook').item.json.body.to || 'YOUR_PHONE_NUMBER' }}",
+        "message": "=Reminder: {{ $('Reminder Webhook').item.json.body.message }}"
       },
       "id": "send-reminder",
-      "name": "Send Reminder",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
+      "name": "Send Reminder via SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
       "position": [660, 300],
       "credentials": {
-        "telegramApi": {
-          "id": "TELEGRAM_CREDENTIAL_ID",
-          "name": "LifeSync Bot"
+        "twilioApi": {
+          "id": "TWILIO_CREDENTIAL_ID",
+          "name": "Twilio"
         }
       },
-      "notes": "SETUP: Replace YOUR_TELEGRAM_CHAT_ID as fallback"
+      "notes": "SETUP: Replace YOUR_TWILIO_PHONE_NUMBER and YOUR_PHONE_NUMBER"
     }
   ],
   "connections": {
@@ -56,7 +54,7 @@
     },
     "Wait Until Reminder Time": {
       "main": [
-        [{ "node": "Send Reminder", "type": "main", "index": 0 }]
+        [{ "node": "Send Reminder via SMS", "type": "main", "index": 0 }]
       ]
     }
   },

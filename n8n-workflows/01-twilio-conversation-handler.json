@@ -1,0 +1,262 @@
+{
+  "name": "01 - LifeSync Twilio Conversation Handler",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lifesync-twilio-incoming",
+        "options": {
+          "responseMode": "responseNode"
+        }
+      },
+      "id": "twilio-webhook",
+      "name": "Twilio Incoming SMS Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "notes": "SETUP: In your Twilio console, set your phone number's 'A Message Comes In' webhook to this URL. Twilio sends POST with Body (message text), From (sender number), To (your Twilio number)."
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.item.json.body;\n\n// Twilio sends form-encoded data\nconst userMessage = body.Body || '';\nconst fromNumber = body.From || '';\nconst toNumber = body.To || '';\n\nreturn [{\n  json: {\n    userMessage,\n    fromNumber,\n    toNumber,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "extract-sms",
+      "name": "Extract SMS Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": { "value": "YOUR_SHEET_ID" },
+        "sheetName": { "value": "ConversationHistory" },
+        "options": {}
+      },
+      "id": "load-history",
+      "name": "Load Conversation History",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [660, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GSHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets"
+        }
+      },
+      "notes": "SETUP: Replace YOUR_SHEET_ID. Reads last conversation entries for context."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build conversation history for Claude\nconst allHistory = $input.all().map(item => item.json);\n// Get last 10 messages for context\nconst history = allHistory.slice(-10);\nconst userMessage = $('Extract SMS Data').item.json.userMessage;\nconst fromNumber = $('Extract SMS Data').item.json.fromNumber;\n\n// Format conversation history\nlet conversationContext = '';\nif (history && history.length > 0) {\n  conversationContext = history.map(row => {\n    return `${row.role}: ${row.message}`;\n  }).join('\\n');\n}\n\nconst systemPrompt = `You are LifeSync, a family life assistant that communicates via text message. You help manage family schedules, school communications, reminders, and daily coordination.\n\nIMPORTANT: Keep responses SHORT. You are texting, not writing emails. Max 2-3 sentences unless the user asks for detail.\n\nYou have access to these capabilities:\n- View and manage Google Calendar events\n- Track homework and school communications  \n- Set reminders\n- Query the event log for past events\n- Coordinate with family members (Josh is co-parent, Emma is daughter at St. Patrick School)\n\nWhen the user wants to take an action, respond with BOTH:\n1. A short, friendly text response (this gets sent as SMS)\n2. A JSON action block wrapped in <action>{...}</action> tags\n\nAvailable actions:\n- {\"type\": \"add_calendar_event\", \"title\": \"...\", \"date\": \"YYYY-MM-DD\", \"time\": \"HH:MM\", \"calendar\": \"personal|family|work|school\", \"notify\": [\"josh\"]}\n- {\"type\": \"set_reminder\", \"message\": \"...\", \"datetime\": \"YYYY-MM-DDTHH:MM:SS\"}\n- {\"type\": \"update_calendar_event\", \"event_id\": \"...\", \"updates\": {...}}\n- {\"type\": \"query_events\", \"date_range\": \"today|this_week|this_month\", \"category\": \"all|school|work|family\"}\n- {\"type\": \"mark_homework_done\", \"subject\": \"...\"}\n- {\"type\": \"notify_family\", \"recipient\": \"josh\", \"message\": \"...\"}\n\nIf the user is just chatting or asking a question that doesn't need an action, just respond conversationally without an action block.\n\nToday's date is ${new Date().toISOString().split('T')[0]}.`;\n\nconst messages = [];\n\n// Add history as messages\nif (conversationContext) {\n  const historyLines = conversationContext.split('\\n');\n  for (const line of historyLines) {\n    if (line.startsWith('user:')) {\n      messages.push({ role: 'user', content: line.replace('user: ', '') });\n    } else if (line.startsWith('assistant:')) {\n      messages.push({ role: 'assistant', content: line.replace('assistant: ', '') });\n    }\n  }\n}\n\n// Add current message\nmessages.push({ role: 'user', content: userMessage });\n\nreturn [{\n  json: {\n    systemPrompt,\n    messages,\n    userMessage,\n    fromNumber\n  }\n}];"
+      },
+      "id": "build-prompt",
+      "name": "Build Claude Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $credentials.httpHeaderAuth.value }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 512,\n  \"system\": {{ JSON.stringify($json.systemPrompt) }},\n  \"messages\": {{ JSON.stringify($json.messages) }}\n}",
+        "options": {}
+      },
+      "id": "claude-api",
+      "name": "Claude API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.item.json;\nconst claudeText = response.content[0].text;\nconst userMessage = $('Build Claude Prompt').item.json.userMessage;\nconst fromNumber = $('Build Claude Prompt').item.json.fromNumber;\n\n// Extract action if present\nlet action = null;\nlet displayText = claudeText;\nconst actionMatch = claudeText.match(/<action>(.*?)<\\/action>/s);\nif (actionMatch) {\n  try {\n    action = JSON.parse(actionMatch[1]);\n    displayText = claudeText.replace(/<action>.*?<\\/action>/s, '').trim();\n  } catch (e) {\n    // If JSON parse fails, just send the text\n  }\n}\n\n// SMS has a 160 char limit per segment — keep it concise but allow multi-segment\n// Twilio handles multi-segment automatically, so we just cap at ~480 chars\nif (displayText.length > 480) {\n  displayText = displayText.substring(0, 477) + '...';\n}\n\nreturn [{\n  json: {\n    displayText,\n    action,\n    userMessage,\n    fromNumber,\n    fullResponse: claudeText\n  }\n}];"
+      },
+      "id": "parse-response",
+      "name": "Parse Claude Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 300]
+    },
+    {
+      "parameters": {
+        "from": "YOUR_TWILIO_PHONE_NUMBER",
+        "to": "={{ $json.fromNumber }}",
+        "message": "={{ $json.displayText }}"
+      },
+      "id": "send-twilio-reply",
+      "name": "Send SMS Reply via Twilio",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [1540, 200],
+      "credentials": {
+        "twilioApi": {
+          "id": "TWILIO_CREDENTIAL_ID",
+          "name": "Twilio"
+        }
+      },
+      "notes": "SETUP: Replace YOUR_TWILIO_PHONE_NUMBER with your Twilio number (e.g., +15551234567)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "",
+              "operator": { "type": "object", "operation": "exists" }
+            }
+          ]
+        }
+      },
+      "id": "has-action",
+      "name": "Has Action?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1540, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const action = $input.item.json.action;\n\nswitch(action.type) {\n  case 'add_calendar_event':\n    return [{ json: { ...action, route: 'calendar' } }];\n  case 'update_calendar_event':\n    return [{ json: { ...action, route: 'calendar' } }];\n  case 'set_reminder':\n    return [{ json: { ...action, route: 'reminder' } }];\n  case 'query_events':\n    return [{ json: { ...action, route: 'query' } }];\n  case 'mark_homework_done':\n    return [{ json: { ...action, route: 'homework' } }];\n  case 'notify_family':\n    return [{ json: { ...action, route: 'notify' } }];\n  default:\n    return [{ json: { ...action, route: 'unknown' } }];\n}"
+      },
+      "id": "action-router",
+      "name": "Route Action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, 400]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "value": "YOUR_SHEET_ID" },
+        "sheetName": { "value": "ConversationHistory" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ new Date().toISOString() }}",
+            "role": "user",
+            "message": "={{ $('Build Claude Prompt').item.json.userMessage }}",
+            "user_id": "={{ $('Build Claude Prompt').item.json.fromNumber }}"
+          }
+        }
+      },
+      "id": "save-user-msg",
+      "name": "Save User Message",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1540, 600],
+      "notes": "SETUP: Replace YOUR_SHEET_ID"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "value": "YOUR_SHEET_ID" },
+        "sheetName": { "value": "ConversationHistory" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ new Date().toISOString() }}",
+            "role": "assistant",
+            "message": "={{ $json.displayText }}",
+            "user_id": "={{ $('Build Claude Prompt').item.json.fromNumber }}"
+          }
+        }
+      },
+      "id": "save-assistant-msg",
+      "name": "Save Assistant Message",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1760, 600],
+      "notes": "SETUP: Replace YOUR_SHEET_ID"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>",
+        "options": {
+          "responseHeaders": {
+            "entries": [{ "name": "Content-Type", "value": "text/xml" }]
+          }
+        }
+      },
+      "id": "respond-twilio",
+      "name": "Respond to Twilio Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [440, 500],
+      "notes": "Sends empty TwiML response immediately so Twilio doesn't timeout. The actual reply is sent via the Twilio Send SMS node."
+    }
+  ],
+  "connections": {
+    "Twilio Incoming SMS Webhook": {
+      "main": [
+        [
+          { "node": "Extract SMS Data", "type": "main", "index": 0 },
+          { "node": "Respond to Twilio Webhook", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Extract SMS Data": {
+      "main": [
+        [{ "node": "Load Conversation History", "type": "main", "index": 0 }]
+      ]
+    },
+    "Load Conversation History": {
+      "main": [
+        [{ "node": "Build Claude Prompt", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Claude Prompt": {
+      "main": [
+        [{ "node": "Claude API", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude API": {
+      "main": [
+        [{ "node": "Parse Claude Response", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Claude Response": {
+      "main": [
+        [
+          { "node": "Send SMS Reply via Twilio", "type": "main", "index": 0 },
+          { "node": "Has Action?", "type": "main", "index": 0 },
+          { "node": "Save User Message", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Has Action?": {
+      "main": [
+        [{ "node": "Route Action", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Save User Message": {
+      "main": [
+        [{ "node": "Save Assistant Message", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [{ "name": "LifeSync" }]
+}

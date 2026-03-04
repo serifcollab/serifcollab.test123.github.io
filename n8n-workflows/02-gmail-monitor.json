@@ -93,34 +93,33 @@
     },
     {
       "parameters": {
-        "jsCode": "const data = $input.item.json;\nconst priorityEmoji = { high: '\\u2757', medium: '\\u2755', low: '\\u2139\\uFE0F' };\nconst categoryEmoji = { school: '\\uD83C\\uDFEB', sports: '\\u26BD', medical: '\\uD83C\\uDFE5', family: '\\uD83D\\uDC68\\u200D\\uD83D\\uDC69\\u200D\\uD83D\\uDC67', work: '\\uD83D\\uDCBC', social: '\\uD83C\\uDF89', bills: '\\uD83D\\uDCB0', spam: '\\uD83D\\uDEAB' };\n\nlet message = `${priorityEmoji[data.priority] || ''} *${data.category?.toUpperCase() || 'EMAIL'}*\\n\\n`;\nmessage += `*From:* ${data.from}\\n`;\nmessage += `*Subject:* ${data.subject}\\n\\n`;\nmessage += `${data.summary}\\n`;\n\nif (data.has_event && data.event_details) {\n  const e = data.event_details;\n  message += `\\n\\uD83D\\uDCC5 *Event Detected:* ${e.title || 'TBD'}\\n`;\n  if (e.date) message += `Date: ${e.date}\\n`;\n  if (e.time) message += `Time: ${e.time}\\n`;\n  if (e.location) message += `Location: ${e.location}\\n`;\n}\n\nif (data.has_action_item) {\n  message += `\\n\\u26A0\\uFE0F *Action needed:* ${data.action_item}\\n`;\n}\n\nreturn [{ json: { message, chatId: 'YOUR_TELEGRAM_CHAT_ID' } }];"
+        "jsCode": "const data = $input.item.json;\nconst priorityEmoji = { high: '\\u2757', medium: '\\u2755', low: '\\u2139\\uFE0F' };\nconst categoryEmoji = { school: '\\uD83C\\uDFEB', sports: '\\u26BD', medical: '\\uD83C\\uDFE5', family: '\\uD83D\\uDC68\\u200D\\uD83D\\uDC69\\u200D\\uD83D\\uDC67', work: '\\uD83D\\uDCBC', social: '\\uD83C\\uDF89', bills: '\\uD83D\\uDCB0', spam: '\\uD83D\\uDEAB' };\n\nlet message = `${priorityEmoji[data.priority] || ''} ${data.category?.toUpperCase() || 'EMAIL'}\\n\\n`;\nmessage += `From: ${data.from}\\n`;\nmessage += `Subject: ${data.subject}\\n\\n`;\nmessage += `${data.summary}\\n`;\n\nif (data.has_event && data.event_details) {\n  const e = data.event_details;\n  message += `\\nEvent Detected: ${e.title || 'TBD'}\\n`;\n  if (e.date) message += `Date: ${e.date}\\n`;\n  if (e.time) message += `Time: ${e.time}\\n`;\n  if (e.location) message += `Location: ${e.location}\\n`;\n}\n\nif (data.has_action_item) {\n  message += `\\nAction needed: ${data.action_item}\\n`;\n}\n\nmessage += `\\nReply to this text to take action.`;\n\nreturn [{ json: { message, to: 'YOUR_PHONE_NUMBER' } }];"
       },
-      "id": "format-telegram",
-      "name": "Format Telegram Message",
+      "id": "format-sms",
+      "name": "Format SMS Message",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [1320, 200],
-      "notes": "SETUP: Replace YOUR_TELEGRAM_CHAT_ID with your actual Telegram chat ID"
+      "notes": "SETUP: Replace YOUR_PHONE_NUMBER with your actual phone number (e.g., +15551234567)"
     },
     {
       "parameters": {
-        "chatId": "={{ $json.chatId }}",
-        "text": "={{ $json.message }}",
-        "additionalFields": {
-          "parse_mode": "Markdown"
-        }
+        "from": "YOUR_TWILIO_PHONE_NUMBER",
+        "to": "={{ $json.to }}",
+        "message": "={{ $json.message }}"
       },
-      "id": "send-telegram",
-      "name": "Send to Telegram",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
+      "id": "send-sms",
+      "name": "Send SMS via Twilio",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
       "position": [1540, 200],
       "credentials": {
-        "telegramApi": {
-          "id": "TELEGRAM_CREDENTIAL_ID",
-          "name": "LifeSync Bot"
+        "twilioApi": {
+          "id": "TWILIO_CREDENTIAL_ID",
+          "name": "Twilio"
         }
-      }
+      },
+      "notes": "SETUP: Replace YOUR_TWILIO_PHONE_NUMBER with your Twilio number (e.g., +15551234567)"
     },
     {
       "parameters": {
@@ -183,13 +182,13 @@
     },
     "Priority >= Medium?": {
       "main": [
-        [{ "node": "Format Telegram Message", "type": "main", "index": 0 }],
+        [{ "node": "Format SMS Message", "type": "main", "index": 0 }],
         []
       ]
     },
-    "Format Telegram Message": {
+    "Format SMS Message": {
       "main": [
-        [{ "node": "Send to Telegram", "type": "main", "index": 0 }]
+        [{ "node": "Send SMS via Twilio", "type": "main", "index": 0 }]
       ]
     }
   },

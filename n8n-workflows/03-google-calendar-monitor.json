@@ -63,34 +63,33 @@
     },
     {
       "parameters": {
-        "jsCode": "const response = $input.item.json;\nconst eventData = $('Extract Event Details').item.json;\nconst summary = response.content[0].text;\n\nconst changeEmoji = {\n  new: '\\uD83D\\uDCC5',\n  updated: '\\uD83D\\uDD04',\n  cancelled: '\\u274C'\n};\n\nconst changeLabel = {\n  new: 'New Event',\n  updated: 'Event Updated',\n  cancelled: 'Event Cancelled'\n};\n\nlet message = `${changeEmoji[eventData.changeType] || '\\uD83D\\uDCC5'} *${changeLabel[eventData.changeType] || 'Calendar'}*\\n\\n`;\nmessage += `${summary}`;\n\nreturn [{\n  json: {\n    message,\n    chatId: 'YOUR_TELEGRAM_CHAT_ID',\n    eventData,\n    summary\n  }\n}];"
+        "jsCode": "const response = $input.item.json;\nconst eventData = $('Extract Event Details').item.json;\nconst summary = response.content[0].text;\n\nconst changeEmoji = {\n  new: '\\uD83D\\uDCC5',\n  updated: '\\uD83D\\uDD04',\n  cancelled: '\\u274C'\n};\n\nconst changeLabel = {\n  new: 'New Event',\n  updated: 'Event Updated',\n  cancelled: 'Event Cancelled'\n};\n\nlet message = `${changeEmoji[eventData.changeType] || '\\uD83D\\uDCC5'} *${changeLabel[eventData.changeType] || 'Calendar'}*\\n\\n`;\nmessage += `${summary}`;\n\nreturn [{\n  json: {\n    message,\n    to: 'YOUR_PHONE_NUMBER',\n    eventData,\n    summary\n  }\n}];"
       },
       "id": "format-message",
       "name": "Format Message",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [880, 300],
-      "notes": "SETUP: Replace YOUR_TELEGRAM_CHAT_ID"
+      "notes": "SETUP: Replace YOUR_PHONE_NUMBER with your phone number (e.g., +15551234567)"
     },
     {
       "parameters": {
-        "chatId": "={{ $json.chatId }}",
-        "text": "={{ $json.message }}",
-        "additionalFields": {
-          "parse_mode": "Markdown"
-        }
+        "from": "YOUR_TWILIO_PHONE_NUMBER",
+        "to": "={{ $json.to }}",
+        "message": "={{ $json.message }}"
       },
-      "id": "send-telegram",
-      "name": "Send to Telegram",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
+      "id": "send-sms",
+      "name": "Send SMS via Twilio",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
       "position": [1100, 300],
       "credentials": {
-        "telegramApi": {
-          "id": "TELEGRAM_CREDENTIAL_ID",
-          "name": "LifeSync Bot"
+        "twilioApi": {
+          "id": "TWILIO_CREDENTIAL_ID",
+          "name": "Twilio"
         }
-      }
+      },
+      "notes": "SETUP: Replace YOUR_TWILIO_PHONE_NUMBER"
     },
     {
       "parameters": {
@@ -140,7 +139,7 @@
     "Format Message": {
       "main": [
         [
-          { "node": "Send to Telegram", "type": "main", "index": 0 },
+          { "node": "Send SMS via Twilio", "type": "main", "index": 0 },
           { "node": "Log to Google Sheet", "type": "main", "index": 0 }
         ]
       ]

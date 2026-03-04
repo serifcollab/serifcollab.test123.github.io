@@ -101,24 +101,22 @@
     },
     {
       "parameters": {
-        "chatId": "YOUR_TELEGRAM_CHAT_ID",
-        "text": "={{ $json.content[0].text }}",
-        "additionalFields": {
-          "parse_mode": "Markdown"
-        }
+        "from": "YOUR_TWILIO_PHONE_NUMBER",
+        "to": "YOUR_PHONE_NUMBER",
+        "message": "={{ $json.content[0].text }}"
       },
       "id": "send-digest",
-      "name": "Send Morning Digest",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
+      "name": "Send Morning Digest via SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
       "position": [1100, 300],
       "credentials": {
-        "telegramApi": {
-          "id": "TELEGRAM_CREDENTIAL_ID",
-          "name": "LifeSync Bot"
+        "twilioApi": {
+          "id": "TWILIO_CREDENTIAL_ID",
+          "name": "Twilio"
         }
       },
-      "notes": "SETUP: Replace YOUR_TELEGRAM_CHAT_ID"
+      "notes": "SETUP: Replace YOUR_TWILIO_PHONE_NUMBER and YOUR_PHONE_NUMBER"
     }
   ],
   "connections": {
@@ -147,7 +145,7 @@
     },
     "Claude Generate Digest": {
       "main": [
-        [{ "node": "Send Morning Digest", "type": "main", "index": 0 }]
+        [{ "node": "Send Morning Digest via SMS", "type": "main", "index": 0 }]
       ]
     }
   },

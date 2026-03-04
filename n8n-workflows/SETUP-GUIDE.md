@@ -1,41 +1,57 @@
-# LifeSync Setup Guide — n8n + Telegram + Claude
+# LifeSync Setup Guide — n8n + Twilio + Claude
 
 ## Overview
 
-This guide walks you through setting up LifeSync: a system that monitors your email, calendar, Slack, and **text messages**, uses Claude AI to parse and prioritize events, and sends you everything through a Telegram bot you can chat with.
+This guide walks you through setting up LifeSync: a system that monitors your email, calendar, Slack, and **text messages**, uses Claude AI to parse and prioritize events, and communicates with you via SMS through Google Messages — no extra apps needed.
+
+**How it works:** LifeSync gets its own phone number (via Twilio). It texts you like a regular contact in Google Messages. You text it back to give commands. Meanwhile, MacroDroid silently forwards your incoming texts to n8n so Claude can detect events and offer to help.
 
 **Total setup time: ~1-2 hours**
 
 ---
 
-## Phase 1: Telegram Bot (15 minutes)
+## Phase 1: Twilio Phone Number (15 minutes)
 
-### Step 1: Create the Bot
+### Step 1: Create a Twilio Account
 
-1. Open Telegram on your phone
-2. Search for `@BotFather` and start a chat
-3. Send `/newbot`
-4. Name it: `LifeSync` (or whatever you like)
-5. Choose a username: `lifesync_yourname_bot` (must end in `bot`)
-6. **Copy the API token** — you'll need this in n8n
+1. Go to [twilio.com](https://www.twilio.com) and sign up for a free trial
+2. Verify your phone number during signup
+3. Twilio gives you trial credit (~$15) — enough for months of testing
 
-### Step 2: Get Your Chat ID
+### Step 2: Get a Phone Number
 
-1. Start a conversation with your new bot (search for it by username, tap "Start")
-2. Send it any message like "hello"
-3. Open this URL in your browser (replace TOKEN with your actual token):
-   ```
-   https://api.telegram.org/botTOKEN/getUpdates
-   ```
-4. Look for `"chat":{"id":XXXXXXXX}` — that number is your Chat ID
-5. **Save this Chat ID** — you'll use it in multiple workflows
+1. In the Twilio Console, go to **Phone Numbers** → **Buy a Number**
+2. Search for a number in your area code (or any number you like)
+3. Make sure **SMS** capability is checked
+4. Buy the number (~$1.15/month)
+5. **Save this number** — this is LifeSync's phone number (e.g., `+15551234567`)
 
-### Step 3: Add Telegram Credentials to n8n
+### Step 3: Save LifeSync as a Contact
+
+1. On your Android phone, open **Contacts**
+2. Add a new contact:
+   - **Name**: LifeSync
+   - **Number**: Your Twilio phone number
+3. Now when LifeSync texts you, it shows up as "LifeSync" in Google Messages
+
+### Step 4: Configure the Webhook
+
+1. In Twilio Console, go to **Phone Numbers** → **Manage** → **Active Numbers**
+2. Click your number
+3. Under **Messaging** → **A Message Comes In**:
+   - Set to **Webhook**
+   - URL: `https://your-n8n.app.n8n.cloud/webhook/lifesync-twilio-incoming` (you'll get this URL after importing Workflow 01 in Phase 4)
+   - Method: **HTTP POST**
+4. Save
+
+### Step 5: Add Twilio Credentials to n8n
 
 1. In n8n, go to **Credentials** → **Add Credential**
-2. Search for **Telegram API**
-3. Paste your bot token
-4. Name it: `LifeSync Bot`
+2. Search for **Twilio API**
+3. Enter:
+   - **Account SID**: Found on your Twilio Console dashboard
+   - **Auth Token**: Found on your Twilio Console dashboard
+4. Name it: `Twilio`
 5. Save
 
 ---
@@ -66,7 +82,7 @@ timestamp | role | message | user_id
 **Tab 3: Reminders**
 Add these column headers in row 1:
 ```
-timestamp | message | scheduled_for | chat_id | status
+timestamp | message | scheduled_for | phone_number | status
 ```
 
 ### Step 3: Get the Sheet ID
@@ -107,18 +123,21 @@ Import each workflow JSON file in order. After importing each one, you'll need t
 | Placeholder | Replace with |
 |---|---|
 | `YOUR_SHEET_ID` | Your Google Sheet ID from Phase 2 |
-| `YOUR_TELEGRAM_CHAT_ID` | Your Telegram Chat ID from Phase 1 |
-| `TELEGRAM_CREDENTIAL_ID` | Select your "LifeSync Bot" credential |
+| `YOUR_PHONE_NUMBER` | Your personal phone number (e.g., `+15551234567`) |
+| `YOUR_TWILIO_PHONE_NUMBER` | Your Twilio/LifeSync number from Phase 1 |
+| `TWILIO_CREDENTIAL_ID` | Select your "Twilio" credential |
 | `ANTHROPIC_CREDENTIAL_ID` | Select your "Anthropic API Key" credential |
 | `GSHEETS_CREDENTIAL_ID` | Select your "Google Sheets" credential |
 
 ### Import Order:
 
-#### Workflow 01: Telegram Conversation Handler
-1. In n8n, click **Import from File** → select `01-telegram-conversation-handler.json`
+#### Workflow 01: Twilio Conversation Handler (the brain)
+1. In n8n, click **Import from File** → select `01-twilio-conversation-handler.json`
 2. Update all credential selections (click each node, select correct credentials)
 3. Update the Google Sheet ID in the Load/Save nodes
-4. **Activate** the workflow
+4. Update your Twilio phone number in the Send SMS node
+5. **Activate** the workflow
+6. **Copy the webhook URL** and paste it into Twilio's webhook config (Phase 1, Step 4)
 
 #### Workflow 02: Gmail Monitor
 1. Import `02-gmail-monitor.json`
@@ -147,9 +166,9 @@ Import each workflow JSON file in order. After importing each one, you'll need t
 
 #### Workflow 06: Reminder Delivery
 1. Import `06-reminder-delivery.json`
-2. Update the Telegram Chat ID fallback
+2. Update the Twilio phone number and your phone number
 3. **Activate** the workflow
-4. Note the webhook URL — you'll need to update Workflow 01's action router to call this
+4. Note the webhook URL — Workflow 01's action router calls this
 
 #### Workflow 07: SMS Monitor (Android)
 1. Import `07-sms-monitor.json`
@@ -157,11 +176,16 @@ Import each workflow JSON file in order. After importing each one, you'll need t
 3. **Activate** the workflow
 4. **Copy the webhook URL** — you'll need it for MacroDroid setup (Phase 5)
 
+#### Workflow 08: Twilio Notification Sender (utility)
+1. Import `08-twilio-notify.json`
+2. Update the Twilio phone number and your phone number
+3. **Activate** the workflow
+
 ---
 
 ## Phase 5: MacroDroid Setup — Android SMS Forwarding (15 minutes)
 
-This is what makes automatic text message monitoring work. MacroDroid runs in the background on your Android phone and forwards every incoming SMS to n8n in real time.
+This is what makes automatic text message monitoring work. MacroDroid runs in the background on your Android phone and forwards every incoming SMS to n8n in real time. Your Google Messages experience is completely unchanged.
 
 ### Step 1: Install MacroDroid
 
@@ -212,29 +236,33 @@ Android may kill background apps to save battery. To prevent this:
 1. Have someone send you a text message (or text yourself from another number)
 2. Within a few seconds, you should see:
    - The n8n workflow execution in your n8n dashboard
-   - A Telegram notification from LifeSync with the parsed message
+   - A text from LifeSync in Google Messages with the parsed event details
 3. If the text contains an event (like a birthday party invite), you'll see suggested actions
 
 ---
 
 ## Phase 6: Test Everything (15 minutes)
 
-### Test 1: Telegram Conversation
-1. Open Telegram and message your bot: "What can you do?"
-2. You should get a response from Claude within 2-3 seconds
+### Test 1: Talk to LifeSync
+1. Open Google Messages and text your LifeSync contact: "What can you do?"
+2. You should get a text back from LifeSync within 3-5 seconds
 3. Try: "Add Emma's soccer practice to the family calendar for Saturday at 10am"
 
 ### Test 2: Gmail
 1. Send yourself a test email with subject "Emma's field trip permission slip due Friday"
-2. Within 5 minutes, you should get a Telegram notification with the parsed event
+2. Within 5 minutes, LifeSync should text you with the parsed event
 
 ### Test 3: Calendar
 1. Add a test event to your Google Calendar
-2. You should get a Telegram summary within 5 minutes
+2. You should get a text from LifeSync with a summary
 
-### Test 4: Daily Digest
+### Test 4: SMS Monitoring
+1. Have a friend text you something like "Hey, can Emma come to the park Saturday at 3pm?"
+2. LifeSync should text you: "Park playdate Saturday at 3pm. Want me to add it to the calendar?"
+
+### Test 5: Daily Digest
 1. In n8n, manually execute the Daily Digest workflow
-2. Check Telegram for the morning briefing
+2. Check Google Messages for the morning briefing from LifeSync
 
 ---
 
@@ -244,7 +272,7 @@ Android may kill background apps to save battery. To prevent this:
 In Workflow 02, you can add label or sender filters to the Gmail Trigger to only process emails from specific sources (school, sports leagues, etc.).
 
 ### Change Notification Priority
-In Workflow 02, edit the "Priority >= Medium?" node to change which emails trigger Telegram notifications vs. just getting logged.
+In Workflow 02, edit the "Priority >= Medium?" node to change which emails trigger text notifications vs. just getting logged.
 
 ### Add More Calendar Sources
 Duplicate Workflow 03 and change the `calendarId` from `primary` to another calendar ID to monitor family, work, or school calendars separately.
@@ -252,17 +280,21 @@ Duplicate Workflow 03 and change the `calendarId` from `primary` to another cale
 ### Customize the AI Personality
 In Workflow 01, edit the system prompt in the "Build Claude Prompt" node. You can change the assistant's name, tone, and capabilities.
 
+### Filter SMS Monitoring
+In MacroDroid, you can change the trigger from "Any Number" to specific contacts only, so LifeSync only monitors texts from school parents, family, etc.
+
 ---
 
 ## Troubleshooting
 
 | Problem | Solution |
 |---|---|
-| Bot doesn't respond | Check that Workflow 01 is active and the Telegram credentials are correct |
+| LifeSync doesn't reply to texts | Check that Workflow 01 is active, Twilio webhook URL is correct, and Twilio credentials work |
 | No Gmail notifications | Verify Gmail OAuth permissions include read access; check the trigger is polling |
 | Claude API errors | Verify your API key is correct and has credits; check the Header Auth credential |
 | Google Sheet errors | Make sure the sheet ID is correct and the tab names match exactly |
-| Telegram "chat not found" | Make sure you sent at least one message to the bot first, and the Chat ID is correct |
+| MacroDroid not forwarding | Check battery optimization settings; verify the macro is enabled; test the webhook URL manually |
+| Twilio "unverified number" error | On trial accounts, you can only send to verified numbers. Verify your number in the Twilio console, or upgrade to a paid account ($20 to remove the restriction) |
 
 ---
 
@@ -270,9 +302,40 @@ In Workflow 01, edit the system prompt in the "Build Claude Prompt" node. You ca
 
 | Service | Monthly Cost |
 |---|---|
-| Telegram | Free |
+| Twilio phone number | ~$1.15/mo |
+| Twilio SMS (send/receive) | ~$0.50-2/mo (at $0.0079/msg) |
 | n8n (cloud) | Free tier or ~$20/mo |
 | Claude API | ~$1-3/mo (50-100 calls/day with Haiku) |
 | Google Sheets | Free |
 | Gmail/Calendar APIs | Free |
-| **Total** | **~$1-23/mo** |
+| MacroDroid | Free |
+| **Total** | **~$3-26/mo** |
+
+---
+
+## Architecture Summary
+
+```
+Google Messages (your texts)          Gmail / Calendar / Slack
+        |                                      |
+        v                                      v
+   MacroDroid ──HTTP POST──> n8n Workflow 07    n8n Workflows 02-05
+   (silent copy)             (SMS Monitor)      (Channel Monitors)
+                                   |                    |
+                                   v                    v
+                              Claude AI (analyze, classify, parse)
+                                   |                    |
+                                   v                    v
+                              Twilio SMS ──────> Google Messages
+                              (LifeSync contact replies to you)
+
+   You text LifeSync ──> Twilio webhook ──> n8n Workflow 01
+                                            (Claude conversation)
+                                                 |
+                                                 v
+                                            Takes actions:
+                                            - Update calendar
+                                            - Set reminders
+                                            - Notify Josh
+                                            - RSVP
+```

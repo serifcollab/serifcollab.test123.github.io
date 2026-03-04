@@ -1,0 +1,66 @@
+{
+  "name": "08 - LifeSync Twilio Notification Sender",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lifesync-notify",
+        "options": {
+          "responseMode": "onReceived"
+        }
+      },
+      "id": "notify-webhook",
+      "name": "Notification Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "notes": "Internal webhook called by other LifeSync workflows. Body: { message: string, to: string (optional, defaults to YOUR_PHONE_NUMBER) }"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.item.json.body;\nlet message = body.message || '';\nconst to = body.to || 'YOUR_PHONE_NUMBER';\n\n// SMS-friendly formatting: strip markdown\nmessage = message\n  .replace(/\\*\\*(.*?)\\*\\*/g, '$1')  // bold\n  .replace(/\\*(.*?)\\*/g, '$1')      // italic\n  .replace(/`(.*?)`/g, '$1')        // code\n  .replace(/\\n{3,}/g, '\\n\\n');      // excessive newlines\n\n// Cap at 1600 chars (Twilio max per message)\nif (message.length > 1600) {\n  message = message.substring(0, 1597) + '...';\n}\n\nreturn [{ json: { message, to } }];"
+      },
+      "id": "format-sms",
+      "name": "Format for SMS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300],
+      "notes": "SETUP: Replace YOUR_PHONE_NUMBER with your actual phone number (e.g., +15551234567)"
+    },
+    {
+      "parameters": {
+        "from": "YOUR_TWILIO_PHONE_NUMBER",
+        "to": "={{ $json.to }}",
+        "message": "={{ $json.message }}"
+      },
+      "id": "send-sms",
+      "name": "Send SMS via Twilio",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [660, 300],
+      "credentials": {
+        "twilioApi": {
+          "id": "TWILIO_CREDENTIAL_ID",
+          "name": "Twilio"
+        }
+      },
+      "notes": "SETUP: Replace YOUR_TWILIO_PHONE_NUMBER with your Twilio number"
+    }
+  ],
+  "connections": {
+    "Notification Webhook": {
+      "main": [
+        [{ "node": "Format for SMS", "type": "main", "index": 0 }]
+      ]
+    },
+    "Format for SMS": {
+      "main": [
+        [{ "node": "Send SMS via Twilio", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [{ "name": "LifeSync" }]
+}
