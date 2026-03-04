@@ -22,7 +22,7 @@
     {
       "parameters": {
         "operation": "read",
-        "documentId": { "value": "YOUR_SHEET_ID" },
+        "documentId": { "value": "1NMy59UU_Ww__fiOwI-BM99X7cLTK3FZGFm1CdmrbQEA" },
         "sheetName": { "value": "EventLog" },
         "options": {}
       },
@@ -37,7 +37,7 @@
           "name": "Google Sheets"
         }
       },
-      "notes": "SETUP: Replace YOUR_SHEET_ID"
+      "notes": "Sheet ID configured"
     },
     {
       "parameters": {
