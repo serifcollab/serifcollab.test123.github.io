@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LifeSync — Life Event Tracker</title>
+    <link rel="icon" href="demo-fav.png">
+    <link rel="stylesheet" href="life-event-tracker.css">
+</head>
+<body>
+    <!-- Sidebar Navigation -->
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">
+                <span class="logo-icon">&#9670;</span>
+                <span class="logo-text">LifeSync</span>
+            </div>
+            <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar">&#9776;</button>
+        </div>
+        <ul class="nav-menu">
+            <li class="nav-item active" data-view="dashboard">
+                <span class="nav-icon">&#9632;</span>
+                <span class="nav-label">Dashboard</span>
+            </li>
+            <li class="nav-item" data-view="inbox">
+                <span class="nav-icon">&#9993;</span>
+                <span class="nav-label">Unified Inbox</span>
+                <span class="nav-badge" id="inboxBadge">0</span>
+            </li>
+            <li class="nav-item" data-view="channels">
+                <span class="nav-icon">&#128225;</span>
+                <span class="nav-label">Channels</span>
+            </li>
+            <li class="nav-item" data-view="automations">
+                <span class="nav-icon">&#9889;</span>
+                <span class="nav-label">Automations</span>
+            </li>
+            <li class="nav-item" data-view="calendar">
+                <span class="nav-icon">&#128197;</span>
+                <span class="nav-label">Calendar</span>
+            </li>
+            <li class="nav-item" data-view="family">
+                <span class="nav-icon">&#128106;</span>
+                <span class="nav-label">Family Hub</span>
+            </li>
+            <li class="nav-item" data-view="settings">
+                <span class="nav-icon">&#9881;</span>
+                <span class="nav-label">Settings</span>
+            </li>
+        </ul>
+        <div class="sidebar-footer">
+            <div class="user-profile">
+                <div class="avatar">U</div>
+                <div class="user-info">
+                    <span class="user-name">User</span>
+                    <span class="user-status">All channels active</span>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main class="main-content" id="mainContent">
+
+        <!-- Top Bar -->
+        <header class="top-bar">
+            <div class="top-bar-left">
+                <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Open menu">&#9776;</button>
+                <h1 class="page-title" id="pageTitle">Dashboard</h1>
+            </div>
+            <div class="top-bar-right">
+                <div class="search-box">
+                    <input type="text" placeholder="Search events, messages, contacts..." id="globalSearch">
+                    <span class="search-icon">&#128269;</span>
+                </div>
+                <button class="notification-btn" id="notifBtn" aria-label="Notifications">
+                    &#128276;
+                    <span class="notif-dot" id="notifDot"></span>
+                </button>
+                <button class="quick-add-btn" id="quickAddBtn" title="Quick add event">+</button>
+            </div>
+        </header>
+
+        <!-- ==================== DASHBOARD VIEW ==================== -->
+        <section class="view active" id="view-dashboard">
+            <!-- Stats Row -->
+            <div class="stats-row">
+                <div class="stat-card">
+                    <div class="stat-icon" style="background:#e8f0fe;color:#1a73e8;">&#9993;</div>
+                    <div class="stat-info">
+                        <span class="stat-number" id="statUnread">0</span>
+                        <span class="stat-label">Unread Messages</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background:#fef3e0;color:#f9a825;">&#128197;</div>
+                    <div class="stat-info">
+                        <span class="stat-number" id="statEvents">0</span>
+                        <span class="stat-label">Events Today</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background:#e8f5e9;color:#43a047;">&#9889;</div>
+                    <div class="stat-info">
+                        <span class="stat-number" id="statAutomations">0</span>
+                        <span class="stat-label">Automations Run</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background:#fce4ec;color:#e53935;">&#9888;</div>
+                    <div class="stat-info">
+                        <span class="stat-number" id="statActionItems">0</span>
+                        <span class="stat-label">Action Items</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Live Activity Feed + Upcoming -->
+            <div class="dashboard-grid">
+                <div class="card activity-feed-card">
+                    <div class="card-header">
+                        <h2>Live Activity Feed</h2>
+                        <span class="live-dot"></span>
+                    </div>
+                    <div class="activity-feed" id="activityFeed">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+                <div class="card upcoming-card">
+                    <div class="card-header">
+                        <h2>Upcoming Today</h2>
+                    </div>
+                    <div class="upcoming-list" id="upcomingList">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Channel Status Row -->
+            <div class="card channel-status-card">
+                <div class="card-header">
+                    <h2>Channel Status</h2>
+                </div>
+                <div class="channel-status-grid" id="channelStatusGrid">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- Recent Automations -->
+            <div class="card">
+                <div class="card-header">
+                    <h2>Recent Automation Actions</h2>
+                    <a href="#" class="view-all-link" data-navigate="automations">View All</a>
+                </div>
+                <div class="automation-log" id="dashAutomationLog">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== UNIFIED INBOX VIEW ==================== -->
+        <section class="view" id="view-inbox">
+            <div class="inbox-toolbar">
+                <div class="filter-tabs">
+                    <button class="filter-tab active" data-filter="all">All</button>
+                    <button class="filter-tab" data-filter="work-email">Work Email</button>
+                    <button class="filter-tab" data-filter="personal-email">Personal Email</button>
+                    <button class="filter-tab" data-filter="family-email">Family Email</button>
+                    <button class="filter-tab" data-filter="text">Texts</button>
+                    <button class="filter-tab" data-filter="slack">Slack</button>
+                    <button class="filter-tab" data-filter="school">School</button>
+                </div>
+                <div class="inbox-actions">
+                    <button class="btn btn-sm" id="markAllReadBtn">Mark All Read</button>
+                </div>
+            </div>
+            <div class="inbox-list" id="inboxList">
+                <!-- Populated by JS -->
+            </div>
+            <!-- Message Detail Panel -->
+            <div class="message-detail-panel" id="messageDetailPanel">
+                <div class="detail-header">
+                    <button class="back-btn" id="detailBackBtn">&larr; Back</button>
+                    <div class="detail-actions">
+                        <button class="btn btn-sm" id="detailArchiveBtn">Archive</button>
+                        <button class="btn btn-sm btn-primary" id="detailActionBtn">Create Action</button>
+                    </div>
+                </div>
+                <div class="detail-content" id="detailContent">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== CHANNELS VIEW ==================== -->
+        <section class="view" id="view-channels">
+            <div class="channels-grid" id="channelsGrid">
+                <!-- Populated by JS -->
+            </div>
+        </section>
+
+        <!-- ==================== AUTOMATIONS VIEW ==================== -->
+        <section class="view" id="view-automations">
+            <div class="automations-header">
+                <h2>Automation Rules</h2>
+                <button class="btn btn-primary" id="addAutomationBtn">+ New Rule</button>
+            </div>
+            <div class="automations-list" id="automationsList">
+                <!-- Populated by JS -->
+            </div>
+            <div class="card" style="margin-top:24px;">
+                <div class="card-header">
+                    <h2>Automation Log</h2>
+                </div>
+                <div class="automation-log" id="automationLog">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== CALENDAR VIEW ==================== -->
+        <section class="view" id="view-calendar">
+            <div class="calendar-header-bar">
+                <button class="btn btn-sm" id="calPrev">&larr;</button>
+                <h2 id="calMonthYear"></h2>
+                <button class="btn btn-sm" id="calNext">&rarr;</button>
+                <div class="calendar-legend">
+                    <span class="legend-dot" style="background:#1a73e8;"></span> Work
+                    <span class="legend-dot" style="background:#43a047;"></span> Personal
+                    <span class="legend-dot" style="background:#f9a825;"></span> Family
+                    <span class="legend-dot" style="background:#e53935;"></span> School
+                </div>
+            </div>
+            <div class="calendar-grid" id="calendarGrid">
+                <!-- Populated by JS -->
+            </div>
+            <div class="card" style="margin-top:24px;">
+                <div class="card-header">
+                    <h2>Events for <span id="calSelectedDate">Today</span></h2>
+                </div>
+                <div class="cal-events-list" id="calEventsList">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== FAMILY HUB VIEW ==================== -->
+        <section class="view" id="view-family">
+            <div class="family-grid">
+                <div class="card family-member-card">
+                    <div class="card-header"><h2>Daughter — School Hub</h2></div>
+                    <div class="school-section">
+                        <h3>St. Patrick Communications</h3>
+                        <div class="school-feed" id="schoolFeed">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                    <div class="homework-section">
+                        <h3>Homework Tracker</h3>
+                        <div class="homework-list" id="homeworkList">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                </div>
+                <div class="card family-calendar-card">
+                    <div class="card-header"><h2>Family Calendar</h2></div>
+                    <div class="family-events" id="familyEvents">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+                <div class="card family-actions-card">
+                    <div class="card-header"><h2>Pending Family Actions</h2></div>
+                    <div class="family-actions" id="familyActions">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== SETTINGS VIEW ==================== -->
+        <section class="view" id="view-settings">
+            <div class="settings-grid">
+                <div class="card">
+                    <div class="card-header"><h2>Connected Channels</h2></div>
+                    <div class="settings-channels" id="settingsChannels">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><h2>Notification Preferences</h2></div>
+                    <div class="settings-section">
+                        <label class="toggle-row">
+                            <span>Push Notifications</span>
+                            <input type="checkbox" checked class="toggle-input">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <label class="toggle-row">
+                            <span>Email Digest (Daily)</span>
+                            <input type="checkbox" checked class="toggle-input">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <label class="toggle-row">
+                            <span>Sound Alerts</span>
+                            <input type="checkbox" class="toggle-input">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <label class="toggle-row">
+                            <span>Automation Confirmations</span>
+                            <input type="checkbox" checked class="toggle-input">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><h2>Family Members</h2></div>
+                    <div class="settings-section">
+                        <div class="family-member-row">
+                            <div class="avatar" style="background:#1a73e8;">J</div>
+                            <div>
+                                <strong>Josh</strong>
+                                <div class="text-muted">Co-parent &middot; Text, Email</div>
+                            </div>
+                        </div>
+                        <div class="family-member-row">
+                            <div class="avatar" style="background:#e53935;">E</div>
+                            <div>
+                                <strong>Emma</strong>
+                                <div class="text-muted">Daughter &middot; St. Patrick School</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><h2>AI Preferences</h2></div>
+                    <div class="settings-section">
+                        <label class="toggle-row">
+                            <span>Auto-detect calendar events from messages</span>
+                            <input type="checkbox" checked class="toggle-input">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <label class="toggle-row">
+                            <span>Auto-notify Josh about daughter's events</span>
+                            <input type="checkbox" checked class="toggle-input">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <label class="toggle-row">
+                            <span>Smart homework extraction from school messages</span>
+                            <input type="checkbox" checked class="toggle-input">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <label class="toggle-row">
+                            <span>Auto-categorize incoming messages</span>
+                            <input type="checkbox" checked class="toggle-input">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Quick Add Modal -->
+    <div class="modal-overlay" id="quickAddModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>Quick Add Event</h2>
+                <button class="modal-close" id="quickAddClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Event Title</label>
+                    <input type="text" id="qaTitle" placeholder="e.g., Emma's birthday party">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Date</label>
+                        <input type="date" id="qaDate">
+                    </div>
+                    <div class="form-group">
+                        <label>Time</label>
+                        <input type="time" id="qaTime">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Calendar</label>
+                    <select id="qaCalendar">
+                        <option value="personal">Personal Calendar</option>
+                        <option value="work">Work Calendar</option>
+                        <option value="family">Family Calendar</option>
+                        <option value="school">School Calendar</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Notify</label>
+                    <div class="checkbox-group">
+                        <label><input type="checkbox" value="josh"> Josh</label>
+                        <label><input type="checkbox" value="self"> Myself (reminder)</label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Notes</label>
+                    <textarea id="qaNotes" rows="3" placeholder="Additional details..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" id="qaCancel">Cancel</button>
+                <button class="btn btn-primary" id="qaSave">Save Event</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Automation Rule Modal -->
+    <div class="modal-overlay" id="automationModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>New Automation Rule</h2>
+                <button class="modal-close" id="automationModalClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Rule Name</label>
+                    <input type="text" id="arName" placeholder="e.g., Birthday invites to both calendars">
+                </div>
+                <div class="form-group">
+                    <label>When (Trigger Channel)</label>
+                    <select id="arTriggerChannel">
+                        <option value="any">Any Channel</option>
+                        <option value="text">Text Messages</option>
+                        <option value="work-email">Work Email</option>
+                        <option value="personal-email">Personal Email</option>
+                        <option value="family-email">Family Email</option>
+                        <option value="slack">Work Slack</option>
+                        <option value="school">St. Patrick School</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Contains Keywords (comma-separated)</label>
+                    <input type="text" id="arKeywords" placeholder="e.g., birthday, party, invitation">
+                </div>
+                <div class="form-group">
+                    <label>Then (Actions)</label>
+                    <div class="checkbox-group">
+                        <label><input type="checkbox" value="add-personal-cal"> Add to Personal Calendar</label>
+                        <label><input type="checkbox" value="add-family-cal"> Add to Family Calendar</label>
+                        <label><input type="checkbox" value="add-work-cal"> Add to Work Calendar</label>
+                        <label><input type="checkbox" value="notify-josh"> Text Josh</label>
+                        <label><input type="checkbox" value="flag-action"> Flag as Action Item</label>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" id="arCancel">Cancel</button>
+                <button class="btn btn-primary" id="arSave">Save Rule</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="life-event-tracker.js"></script>
+</body>
+</html>
