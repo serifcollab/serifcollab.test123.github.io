@@ -186,7 +186,7 @@ Import each workflow JSON file in order. After importing each one, you'll need t
 1. Import `09-proactive-outreach.json`
 2. Update all placeholders (Twilio numbers, phone numbers, credentials)
 3. Adjust cron times if needed:
-   - **6:00 AM** — Morning check (reminders, conflicts, alerts) — runs before the 7am digest
+   - **8:30 AM** — Morning check (reminders, conflicts, alerts)
    - **6:00 PM** — Evening follow-up (nudges for unresolved action items)
    - **8:00 PM Sunday** — Week ahead preview
 4. The **Real-Time Alert Webhook** (`/webhook/lifesync-alert`) is called by other workflows for urgent items (schedule conflicts, cancellations, etc.)
@@ -367,7 +367,7 @@ Google Messages (your texts)          Gmail / Calendar / Slack
                                             - RSVP
 
    Proactive Outreach (WF09):
-   ┌─ 6am ── Morning alerts (conflicts, upcoming events, reminders)
+   ┌─ 8:30am ── Morning alerts (conflicts, upcoming events, reminders)
    ├─ 6pm ── Evening follow-ups (unresolved action items)
    ├─ Sun 8pm ── Week ahead preview
    └─ Real-time ── Urgent alerts via webhook from any workflow

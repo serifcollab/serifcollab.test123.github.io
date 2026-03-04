@@ -7,17 +7,17 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "0 6 * * *"
+              "expression": "30 8 * * *"
             }
           ]
         }
       },
       "id": "morning-cron",
-      "name": "Morning Check (6am)",
+      "name": "Morning Check (8:30am)",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [220, 200],
-      "notes": "Runs at 6:00 AM daily. Checks for upcoming reminders, schedule conflicts, and pending follow-ups. Runs BEFORE the 7am daily digest so alerts go out first."
+      "notes": "Runs at 8:30 AM daily. Checks for upcoming reminders, schedule conflicts, and pending follow-ups."
     },
     {
       "parameters": {
@@ -492,7 +492,7 @@
     }
   ],
   "connections": {
-    "Morning Check (6am)": {
+    "Morning Check (8:30am)": {
       "main": [
         [
           { "node": "Read Event Log", "type": "main", "index": 0 },
