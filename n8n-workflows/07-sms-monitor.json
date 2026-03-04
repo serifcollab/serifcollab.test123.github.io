@@ -1,0 +1,193 @@
+{
+  "name": "07 - LifeSync SMS Monitor (Android via MacroDroid)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lifesync-sms",
+        "options": {
+          "responseMode": "onReceived"
+        }
+      },
+      "id": "sms-webhook",
+      "name": "SMS Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "notes": "Receives incoming SMS data from MacroDroid. Expected body: { sender: string, message: string, timestamp: string }"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.item.json.body;\nconst sender = body.sender || body.from || 'Unknown';\nconst message = body.message || body.text || '';\nconst timestamp = body.timestamp || new Date().toISOString();\n\n// Clean phone number formatting\nconst cleanSender = sender.replace(/[^\\d+]/g, '');\n\nreturn [{\n  json: {\n    sender,\n    cleanSender,\n    message,\n    timestamp,\n    promptText: `Incoming text message:\\nFrom: ${sender}\\nTime: ${timestamp}\\nMessage: ${message}`\n  }\n}];"
+      },
+      "id": "extract-sms",
+      "name": "Extract SMS Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $credentials.httpHeaderAuth.value }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20241022\",\n  \"max_tokens\": 512,\n  \"system\": \"You are a family life assistant analyzing incoming text messages for a busy parent. The parent's family context:\\n- Co-parent: Josh\\n- Daughter: Emma, attends St. Patrick School\\n- The parent manages family calendars, school events, sports, and social activities.\\n\\nAnalyze this text message and respond with ONLY a JSON object (no markdown, no code blocks):\\n{\\n  \\\"relevant\\\": true/false (is this about family scheduling, events, kids, school, activities, or something the parent needs to act on?),\\n  \\\"category\\\": \\\"invitation|schedule_change|reminder|info|school|sports|medical|social|spam|casual\\\",\\n  \\\"summary\\\": \\\"one clear sentence summarizing what this is about\\\",\\n  \\\"priority\\\": \\\"high|medium|low\\\",\\n  \\\"has_event\\\": true/false,\\n  \\\"event_details\\\": { \\\"title\\\": \\\"...\\\", \\\"date\\\": \\\"YYYY-MM-DD or natural language\\\", \\\"time\\\": \\\"HH:MM or natural language\\\", \\\"location\\\": \\\"...\\\" } (only if has_event is true),\\n  \\\"suggested_actions\\\": [\\\"list of actions like: add_to_calendar, notify_josh, rsvp, set_reminder, none\\\"],\\n  \\\"needs_response\\\": true/false (does the sender expect a reply?),\\n  \\\"response_deadline\\\": \\\"date or null if mentioned in the message\\\"\\n}\\n\\nBe smart about detecting events even from casual language. 'Want to grab lunch Tuesday?' is an event. 'Lily's party Saturday at 2' is an event. 'k sounds good' is casual.\",\n  \"messages\": [{\"role\": \"user\", \"content\": {{ JSON.stringify($json.promptText) }}}]\n}",
+        "options": {}
+      },
+      "id": "claude-analyze",
+      "name": "Claude Analyze SMS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.item.json;\nconst smsData = $('Extract SMS Data').item.json;\nlet parsed;\n\ntry {\n  parsed = JSON.parse(response.content[0].text);\n} catch (e) {\n  const match = response.content[0].text.match(/\\{[\\s\\S]*\\}/);\n  if (match) {\n    parsed = JSON.parse(match[0]);\n  } else {\n    parsed = { relevant: false, category: 'unknown', summary: 'Could not parse', priority: 'low', has_event: false, suggested_actions: [], needs_response: false };\n  }\n}\n\nreturn [{\n  json: {\n    ...smsData,\n    ...parsed\n  }\n}];"
+      },
+      "id": "parse-analysis",
+      "name": "Parse Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.relevant }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "id": "is-relevant",
+      "name": "Is Relevant?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.item.json;\n\nconst categoryEmoji = {\n  invitation: '\\uD83C\\uDF89',\n  schedule_change: '\\uD83D\\uDD04',\n  reminder: '\\u23F0',\n  info: '\\u2139\\uFE0F',\n  school: '\\uD83C\\uDFEB',\n  sports: '\\u26BD',\n  medical: '\\uD83C\\uDFE5',\n  social: '\\uD83C\\uDF7B'\n};\n\nconst priorityEmoji = { high: '\\u2757', medium: '\\u2755', low: '' };\n\nlet message = `${priorityEmoji[data.priority] || ''}\\uD83D\\uDCF1 *Text from ${data.sender}*\\n\\n`;\nmessage += `${data.summary}\\n`;\n\nif (data.has_event && data.event_details) {\n  const e = data.event_details;\n  message += `\\n\\uD83D\\uDCC5 *Event:* ${e.title || 'TBD'}\\n`;\n  if (e.date) message += `\\uD83D\\uDCC6 ${e.date}`;\n  if (e.time) message += ` at ${e.time}`;\n  message += '\\n';\n  if (e.location) message += `\\uD83D\\uDCCD ${e.location}\\n`;\n}\n\n// Build action buttons as text prompts\nif (data.suggested_actions && data.suggested_actions.length > 0) {\n  message += '\\n*Want me to:*\\n';\n  const actionLabels = {\n    add_to_calendar: '\\uD83D\\uDCC5 Add to calendars',\n    notify_josh: '\\uD83D\\uDCE4 Notify Josh',\n    rsvp: '\\u2709\\uFE0F RSVP',\n    set_reminder: '\\u23F0 Set a reminder',\n    none: ''\n  };\n  data.suggested_actions.forEach(function(action) {\n    if (action !== 'none' && actionLabels[action]) {\n      message += `  \\u2022 ${actionLabels[action]}\\n`;\n    }\n  });\n  message += '\\n_Reply with what you\\'d like me to do._';\n}\n\nif (data.needs_response) {\n  message += `\\n\\n\\u26A0\\uFE0F _${data.sender} is expecting a reply`;\n  if (data.response_deadline) message += ` by ${data.response_deadline}`;\n  message += '_';\n}\n\nreturn [{\n  json: {\n    message,\n    chatId: 'YOUR_TELEGRAM_CHAT_ID',\n    originalData: data\n  }\n}];"
+      },
+      "id": "format-telegram",
+      "name": "Format Telegram Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 200],
+      "notes": "SETUP: Replace YOUR_TELEGRAM_CHAT_ID"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-telegram",
+      "name": "Send to Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1540, 200],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CREDENTIAL_ID",
+          "name": "LifeSync Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "value": "YOUR_SHEET_ID" },
+        "sheetName": { "value": "EventLog" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ $json.timestamp || new Date().toISOString() }}",
+            "source": "sms",
+            "from": "={{ $json.sender }}",
+            "subject": "={{ $json.category }}",
+            "summary": "={{ $json.summary }}",
+            "category": "={{ $json.category }}",
+            "priority": "={{ $json.priority }}",
+            "has_event": "={{ String($json.has_event) }}",
+            "has_action_item": "={{ String($json.needs_response || $json.suggested_actions?.length > 0) }}",
+            "action_item": "={{ $json.suggested_actions?.join(', ') || '' }}"
+          }
+        }
+      },
+      "id": "log-to-sheet",
+      "name": "Log to Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1320, 450],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GSHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets"
+        }
+      },
+      "notes": "SETUP: Replace YOUR_SHEET_ID"
+    }
+  ],
+  "connections": {
+    "SMS Webhook": {
+      "main": [
+        [{ "node": "Extract SMS Data", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract SMS Data": {
+      "main": [
+        [{ "node": "Claude Analyze SMS", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude Analyze SMS": {
+      "main": [
+        [{ "node": "Parse Analysis", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Analysis": {
+      "main": [
+        [
+          { "node": "Is Relevant?", "type": "main", "index": 0 },
+          { "node": "Log to Google Sheet", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Is Relevant?": {
+      "main": [
+        [{ "node": "Format Telegram Message", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Format Telegram Message": {
+      "main": [
+        [{ "node": "Send to Telegram", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [{ "name": "LifeSync" }]
+}

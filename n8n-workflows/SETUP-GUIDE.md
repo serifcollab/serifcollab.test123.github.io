@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide walks you through setting up LifeSync: a system that monitors your email, calendar, and Slack, uses Claude AI to parse and prioritize events, and sends you everything through a Telegram bot you can chat with.
+This guide walks you through setting up LifeSync: a system that monitors your email, calendar, Slack, and **text messages**, uses Claude AI to parse and prioritize events, and sends you everything through a Telegram bot you can chat with.
 
 **Total setup time: ~1-2 hours**
 
@@ -151,9 +151,73 @@ Import each workflow JSON file in order. After importing each one, you'll need t
 3. **Activate** the workflow
 4. Note the webhook URL — you'll need to update Workflow 01's action router to call this
 
+#### Workflow 07: SMS Monitor (Android)
+1. Import `07-sms-monitor.json`
+2. Update all placeholders
+3. **Activate** the workflow
+4. **Copy the webhook URL** — you'll need it for MacroDroid setup (Phase 5)
+
 ---
 
-## Phase 5: Test Everything (15 minutes)
+## Phase 5: MacroDroid Setup — Android SMS Forwarding (15 minutes)
+
+This is what makes automatic text message monitoring work. MacroDroid runs in the background on your Android phone and forwards every incoming SMS to n8n in real time.
+
+### Step 1: Install MacroDroid
+
+1. Install **MacroDroid** from the Google Play Store (free, no subscription needed)
+2. Open it and grant the permissions it asks for (SMS access is required)
+
+### Step 2: Create the SMS Forwarding Macro
+
+1. Tap **Add Macro** (the + button)
+2. Name it: `LifeSync SMS Forward`
+
+**Trigger:**
+1. Tap **Triggers** → **Device Events** → **SMS Received**
+2. Select **Any Number** (or choose specific contacts if you want to filter)
+3. Leave content filter empty (forward everything, let Claude decide relevance)
+
+**Action:**
+1. Tap **Actions** → **Connectivity** → **HTTP Request**
+2. Configure:
+   - **Method**: POST
+   - **URL**: Your n8n webhook URL from Workflow 07 (looks like `https://your-n8n.app.n8n.cloud/webhook/lifesync-sms`)
+   - **Content Type**: `application/json`
+   - **Body**:
+     ```json
+     {
+       "sender": "{sms_number}",
+       "message": "{sms_message}",
+       "timestamp": "{year}-{month_digit}-{dayofmonth}T{hour24}:{minute}:{second}"
+     }
+     ```
+   Note: The `{sms_number}`, `{sms_message}`, etc. are MacroDroid built-in variables — tap the `{}` icon to insert them.
+
+**Constraints (optional but recommended):**
+- None needed, but you can add **Battery > Battery Level > Above 15%** to preserve battery
+
+3. Save the macro and make sure it shows as **Enabled**
+
+### Step 3: Keep MacroDroid Running
+
+Android may kill background apps to save battery. To prevent this:
+
+1. Go to **Settings** → **Battery** → **Battery Optimization**
+2. Find MacroDroid and set it to **Don't optimize** / **Unrestricted**
+3. In MacroDroid settings, enable **Start at boot**
+
+### Step 4: Test It
+
+1. Have someone send you a text message (or text yourself from another number)
+2. Within a few seconds, you should see:
+   - The n8n workflow execution in your n8n dashboard
+   - A Telegram notification from LifeSync with the parsed message
+3. If the text contains an event (like a birthday party invite), you'll see suggested actions
+
+---
+
+## Phase 6: Test Everything (15 minutes)
 
 ### Test 1: Telegram Conversation
 1. Open Telegram and message your bot: "What can you do?"
