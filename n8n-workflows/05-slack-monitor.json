@@ -18,7 +18,7 @@
           "name": "Slack Account"
         }
       },
-      "notes": "SETUP: Connect Slack OAuth2 credentials and select the channels you want to monitor."
+      "notes": "SETUP: Connect Slack OAuth2 credentials and select the channels you want to monitor (including DM channels with MVPs)."
     },
     {
       "parameters": {
@@ -40,7 +40,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const msg = $input.item.json;\nconst text = msg.event?.text || msg.text || '';\nconst user = msg.event?.user || 'Unknown';\nconst channel = msg.event?.channel || '';\nconst ts = msg.event?.ts || '';\n\nreturn [{\n  json: {\n    text,\n    user,\n    channel,\n    timestamp: ts,\n    promptText: `Slack message from user ${user} in channel ${channel}:\\n\\n${text}`\n  }\n}];"
+        "jsCode": "const msg = $input.item.json;\nconst text = msg.event?.text || msg.text || '';\nconst user = msg.event?.user || 'Unknown';\nconst channel = msg.event?.channel || '';\nconst ts = msg.event?.ts || '';\nconst threadTs = msg.event?.thread_ts || ts;\n\nreturn [{\n  json: {\n    text,\n    user,\n    channel,\n    timestamp: ts,\n    threadTs,\n    promptText: `Slack message from user ${user} in channel ${channel}:\\n\\n${text}`\n  }\n}];"
       },
       "id": "extract-message",
       "name": "Extract Message",
@@ -70,7 +70,7 @@
       "name": "Claude Filter",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [880, 300],
+      "position": [880, 200],
       "credentials": {
         "httpHeaderAuth": {
           "id": "ANTHROPIC_CREDENTIAL_ID",
@@ -86,7 +86,7 @@
       "name": "Parse Filter Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1100, 300]
+      "position": [1100, 200]
     },
     {
       "parameters": {
@@ -104,7 +104,7 @@
       "name": "Is Relevant?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1320, 300]
+      "position": [1320, 200]
     },
     {
       "parameters": {
@@ -116,7 +116,7 @@
       "name": "Send SMS via Twilio",
       "type": "n8n-nodes-base.twilio",
       "typeVersion": 1,
-      "position": [1540, 200],
+      "position": [1540, 100],
       "credentials": {
         "twilioApi": {
           "id": "TWILIO_CREDENTIAL_ID",
@@ -124,6 +124,203 @@
         }
       },
       "notes": "SETUP: Replace YOUR_TWILIO_PHONE_NUMBER and YOUR_PHONE_NUMBER"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ======================================================\n// MVP LIST — Add your VIP Slack user IDs here\n// To find a user's Slack ID: click their profile > \"...\" > \"Copy member ID\"\n// ======================================================\nconst MVP_USER_IDS = [\n  // 'U01ABC123',  // e.g. Your boss\n  // 'U02DEF456',  // e.g. Key stakeholder\n  // 'U03GHI789',  // e.g. Important client contact\n];\n\nconst YOUR_SLACK_USER_ID = 'YOUR_SLACK_USER_ID'; // SETUP: Your own Slack user ID\n\nconst msg = $input.item.json;\nconst senderUserId = msg.user;\n\n// Only flag if sender is an MVP and sender is NOT you\nconst isMvp = MVP_USER_IDS.includes(senderUserId) && senderUserId !== YOUR_SLACK_USER_ID;\n\nreturn [{\n  json: {\n    ...msg,\n    isMvp,\n    senderUserId,\n    yourUserId: YOUR_SLACK_USER_ID\n  }\n}];",
+        "notices": "SETUP: Add your MVP Slack user IDs to the MVP_USER_IDS array and set YOUR_SLACK_USER_ID"
+      },
+      "id": "check-mvp",
+      "name": "Is MVP Sender?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.isMvp }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "id": "mvp-gate",
+      "name": "MVP?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1100, 500]
+    },
+    {
+      "parameters": {
+        "amount": 5,
+        "unit": "minutes"
+      },
+      "id": "wait-5min",
+      "name": "Wait 5 Minutes",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1320, 500],
+      "webhookId": "mvp-wait-timer"
+    },
+    {
+      "parameters": {
+        "url": "=https://slack.com/api/conversations.replies",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $credentials.httpHeaderAuth.value }}" }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "channel", "value": "={{ $('Is MVP Sender?').item.json.channel }}" },
+            { "name": "ts", "value": "={{ $('Is MVP Sender?').item.json.threadTs }}" },
+            { "name": "oldest", "value": "={{ $('Is MVP Sender?').item.json.timestamp }}" },
+            { "name": "limit", "value": "50" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "check-replies",
+      "name": "Check Thread Replies",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1540, 500],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "SLACK_BOT_TOKEN_CREDENTIAL_ID",
+          "name": "Slack Bot Token"
+        }
+      },
+      "notes": "SETUP: Create an HTTP Header Auth credential with Name='Authorization' and Value='Bearer xoxb-YOUR-SLACK-BOT-TOKEN'. Or reuse your Slack OAuth token."
+    },
+    {
+      "parameters": {
+        "jsCode": "const replies = $input.item.json;\nconst mvpData = $('Is MVP Sender?').item.json;\nconst yourUserId = mvpData.yourUserId;\nconst originalTs = mvpData.timestamp;\n\n// Check if any reply in the thread is from you, after the original message\nlet youReplied = false;\n\nif (replies.ok && replies.messages) {\n  youReplied = replies.messages.some(msg => {\n    return msg.user === yourUserId && msg.ts > originalTs;\n  });\n}\n\n// Also check the channel for direct messages from you after the MVP's message\n// (covers cases where the reply isn't threaded)\nreturn [{\n  json: {\n    ...mvpData,\n    youReplied,\n    replyCount: replies.messages?.length || 0\n  }\n}];"
+      },
+      "id": "parse-replies",
+      "name": "Did You Reply?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.youReplied }}",
+              "rightValue": false,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "id": "no-reply-gate",
+      "name": "No Reply?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1980, 500]
+    },
+    {
+      "parameters": {
+        "url": "=https://slack.com/api/users.info",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $credentials.httpHeaderAuth.value }}" }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "user", "value": "={{ $json.senderUserId }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-mvp-name",
+      "name": "Get MVP Name",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2200, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "SLACK_BOT_TOKEN_CREDENTIAL_ID",
+          "name": "Slack Bot Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "from": "YOUR_TWILIO_PHONE_NUMBER",
+        "to": "YOUR_PHONE_NUMBER",
+        "message": "=⚡ MVP ALERT: {{ $json.user?.real_name || $json.user?.name || 'Someone important' }} messaged you 5 min ago and you haven't replied.\n\nMessage: {{ $('Is MVP Sender?').item.json.text }}"
+      },
+      "id": "send-mvp-alert",
+      "name": "Send MVP Alert SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [2420, 400],
+      "credentials": {
+        "twilioApi": {
+          "id": "TWILIO_CREDENTIAL_ID",
+          "name": "Twilio"
+        }
+      },
+      "notes": "SETUP: Replace YOUR_TWILIO_PHONE_NUMBER and YOUR_PHONE_NUMBER"
+    },
+    {
+      "parameters": {
+        "url": "=https://slack.com/api/conversations.history",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $credentials.httpHeaderAuth.value }}" }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "channel", "value": "={{ $('Is MVP Sender?').item.json.channel }}" },
+            { "name": "oldest", "value": "={{ $('Is MVP Sender?').item.json.timestamp }}" },
+            { "name": "limit", "value": "20" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "check-channel-replies",
+      "name": "Check Channel Messages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1540, 700],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "SLACK_BOT_TOKEN_CREDENTIAL_ID",
+          "name": "Slack Bot Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const threadReplies = $('Did You Reply?').item.json;\nconst channelMessages = $input.item.json;\nconst yourUserId = threadReplies.yourUserId;\nconst originalTs = threadReplies.timestamp;\n\n// If already found a threaded reply, pass through\nif (threadReplies.youReplied) {\n  return [{ json: { ...threadReplies, youReplied: true } }];\n}\n\n// Check channel-level messages (non-threaded replies)\nlet youRepliedInChannel = false;\nif (channelMessages.ok && channelMessages.messages) {\n  youRepliedInChannel = channelMessages.messages.some(msg => {\n    return msg.user === yourUserId && msg.ts > originalTs;\n  });\n}\n\nreturn [{\n  json: {\n    ...threadReplies,\n    youReplied: threadReplies.youReplied || youRepliedInChannel\n  }\n}];"
+      },
+      "id": "merge-reply-check",
+      "name": "Merge Reply Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, 700]
     }
   ],
   "connections": {
@@ -140,7 +337,10 @@
     },
     "Extract Message": {
       "main": [
-        [{ "node": "Claude Filter", "type": "main", "index": 0 }]
+        [
+          { "node": "Claude Filter", "type": "main", "index": 0 },
+          { "node": "Is MVP Sender?", "type": "main", "index": 0 }
+        ]
       ]
     },
     "Claude Filter": {
@@ -157,6 +357,56 @@
       "main": [
         [{ "node": "Send SMS via Twilio", "type": "main", "index": 0 }],
         []
+      ]
+    },
+    "Is MVP Sender?": {
+      "main": [
+        [{ "node": "MVP?", "type": "main", "index": 0 }]
+      ]
+    },
+    "MVP?": {
+      "main": [
+        [{ "node": "Wait 5 Minutes", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Wait 5 Minutes": {
+      "main": [
+        [
+          { "node": "Check Thread Replies", "type": "main", "index": 0 },
+          { "node": "Check Channel Messages", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Check Thread Replies": {
+      "main": [
+        [{ "node": "Did You Reply?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Did You Reply?": {
+      "main": [
+        [{ "node": "Merge Reply Check", "type": "main", "index": 0 }]
+      ]
+    },
+    "Check Channel Messages": {
+      "main": [
+        [{ "node": "Merge Reply Check", "type": "main", "index": 0 }]
+      ]
+    },
+    "Merge Reply Check": {
+      "main": [
+        [{ "node": "No Reply?", "type": "main", "index": 0 }]
+      ]
+    },
+    "No Reply?": {
+      "main": [
+        [{ "node": "Get MVP Name", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Get MVP Name": {
+      "main": [
+        [{ "node": "Send MVP Alert SMS", "type": "main", "index": 0 }]
       ]
     }
   },
