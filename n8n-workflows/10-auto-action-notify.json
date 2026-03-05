@@ -1,0 +1,310 @@
+{
+  "name": "10 - LifeSync Auto-Action & Notification",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lifesync-auto-action",
+        "options": {
+          "responseMode": "onReceived"
+        }
+      },
+      "id": "action-webhook",
+      "name": "Auto-Action Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "notes": "Called by Workflows 02 (Gmail) and 07 (SMS Monitor) when they detect high-confidence actionable items. Body: { source: 'gmail'|'sms', from: string, subject: string, summary: string, category: string, priority: string, event_details: object|null, suggested_actions: string[], original_message: string, notify_josh: boolean }"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.item.json.body;\nconst source = body.source || 'unknown';\nconst from = body.from || 'Unknown';\nconst summary = body.summary || '';\nconst category = body.category || '';\nconst priority = body.priority || 'medium';\nconst eventDetails = body.event_details || null;\nconst suggestedActions = body.suggested_actions || [];\nconst notifyJosh = body.notify_josh || false;\nconst originalMessage = body.original_message || '';\n\n// Determine which auto-actions to take\nconst actions = [];\n\n// Auto-add to calendar if event detected with enough detail\nif (eventDetails && eventDetails.title && eventDetails.date) {\n  actions.push({\n    type: 'add_calendar_event',\n    title: eventDetails.title,\n    date: eventDetails.date,\n    time: eventDetails.time || null,\n    location: eventDetails.location || null,\n    calendar: category === 'school' ? 'school' : category === 'work' ? 'work' : 'family'\n  });\n}\n\n// Auto-notify Josh for family/school items where he should know\nif (notifyJosh || (category === 'school' && priority !== 'low') || suggestedActions.includes('notify_josh')) {\n  actions.push({\n    type: 'notify_josh',\n    message: summary\n  });\n}\n\n// Auto-set reminder for items with deadlines\nif (suggestedActions.includes('rsvp') || suggestedActions.includes('set_reminder')) {\n  const reminderDate = eventDetails?.date\n    ? new Date(new Date(eventDetails.date).getTime() - 86400000).toISOString()\n    : new Date(Date.now() + 86400000).toISOString();\n  actions.push({\n    type: 'set_reminder',\n    message: `Don't forget: ${summary}`,\n    scheduledFor: reminderDate\n  });\n}\n\n// Build Claude prompt to compose the notification message\nconst prompt = `You are LifeSync, a family life assistant. You just automatically took action on something you found. Compose a SHORT text message (under 400 chars) telling the parent what you found and what you did about it.\n\nBe conversational and confident, like a helpful assistant reporting back. Use first person (\"I saw...\", \"I've added...\", \"I noticed...\").\n\nSource: ${source === 'gmail' ? 'Email' : source === 'sms' ? 'Text message' : source}\nFrom: ${from}\nWhat was found: ${summary}\nCategory: ${category}\n\nActions taken:\n${actions.map(a => {\n  switch(a.type) {\n    case 'add_calendar_event': return `- Added \"${a.title}\" to the ${a.calendar} calendar${a.date ? ' on ' + a.date : ''}${a.time ? ' at ' + a.time : ''}`;\n    case 'notify_josh': return '- Notified Josh';\n    case 'set_reminder': return `- Set a reminder: ${a.message}`;\n    default: return `- ${a.type}`;\n  }\n}).join('\\n')}\n\nKeep it natural and brief. Example tone: \"I saw Sarah invited Emma to her birthday party on March 15 — added it to the family calendar and Josh has been notified!\"`;\n\nreturn [{ json: { prompt, actions, source, from, summary, category, priority, eventDetails, notifyJosh } }];"
+      },
+      "id": "determine-actions",
+      "name": "Determine Auto-Actions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.actions.length }}",
+              "rightValue": 0,
+              "operator": { "type": "number", "operation": "gt" }
+            }
+          ]
+        }
+      },
+      "id": "has-actions",
+      "name": "Has Auto-Actions?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.item.json;\nconst actions = data.actions;\nconst results = [];\n\nfor (const action of actions) {\n  switch(action.type) {\n    case 'add_calendar_event': {\n      // Prepare calendar event data for the Google Calendar node\n      const startDate = action.date;\n      let startDateTime = null;\n      let allDay = true;\n      if (action.time) {\n        // Parse time like \"2:00 PM\" or \"14:00\"\n        const timeParts = action.time.match(/(\\d{1,2}):(\\d{2})\\s*(AM|PM)?/i);\n        if (timeParts) {\n          let hours = parseInt(timeParts[1]);\n          const mins = timeParts[2];\n          if (timeParts[3]?.toUpperCase() === 'PM' && hours < 12) hours += 12;\n          if (timeParts[3]?.toUpperCase() === 'AM' && hours === 12) hours = 0;\n          startDateTime = `${startDate}T${String(hours).padStart(2, '0')}:${mins}:00`;\n          allDay = false;\n        }\n      }\n      results.push({\n        actionType: 'calendar',\n        title: action.title,\n        startDate: allDay ? startDate : startDateTime,\n        endDate: allDay ? startDate : new Date(new Date(startDateTime).getTime() + 3600000).toISOString(),\n        location: action.location || '',\n        allDay,\n        calendar: action.calendar\n      });\n      break;\n    }\n    case 'notify_josh': {\n      results.push({\n        actionType: 'notify_josh',\n        message: action.message\n      });\n      break;\n    }\n    case 'set_reminder': {\n      results.push({\n        actionType: 'reminder',\n        message: action.message,\n        scheduledFor: action.scheduledFor\n      });\n      break;\n    }\n  }\n}\n\nreturn results.map(r => ({ json: { ...r, originalData: { source: data.source, from: data.from, summary: data.summary, prompt: data.prompt } } }));"
+      },
+      "id": "prepare-actions",
+      "name": "Prepare Action Payloads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.actionType }}",
+              "rightValue": "calendar",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "id": "route-calendar",
+      "name": "Is Calendar Action?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1140, 150]
+    },
+    {
+      "parameters": {
+        "calendarId": "primary",
+        "summary": "={{ $json.title }}",
+        "start": "={{ $json.startDate }}",
+        "end": "={{ $json.endDate }}",
+        "options": {
+          "location": "={{ $json.location }}"
+        }
+      },
+      "id": "create-calendar-event",
+      "name": "Create Calendar Event",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.1,
+      "position": [1360, 100],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "GCAL_CREDENTIAL_ID",
+          "name": "Google Calendar"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.actionType }}",
+              "rightValue": "notify_josh",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "id": "route-josh",
+      "name": "Is Josh Notification?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1140, 350]
+    },
+    {
+      "parameters": {
+        "from": "YOUR_TWILIO_PHONE_NUMBER",
+        "to": "JOSH_PHONE_NUMBER",
+        "message": "=From LifeSync: {{ $json.message }}"
+      },
+      "id": "notify-josh-sms",
+      "name": "Send SMS to Josh",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [1360, 300],
+      "credentials": {
+        "twilioApi": {
+          "id": "TWILIO_CREDENTIAL_ID",
+          "name": "Twilio"
+        }
+      },
+      "notes": "SETUP: Replace YOUR_TWILIO_PHONE_NUMBER and JOSH_PHONE_NUMBER with actual numbers"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.actionType }}",
+              "rightValue": "reminder",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "id": "route-reminder",
+      "name": "Is Reminder?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1140, 550]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.WEBHOOK_BASE_URL || 'https://your-n8n.app.n8n.cloud' }}/webhook/lifesync-reminder",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": {{ JSON.stringify($json.message) }},\n  \"to\": \"YOUR_PHONE_NUMBER\",\n  \"scheduledFor\": {{ JSON.stringify($json.scheduledFor) }}\n}",
+        "options": {}
+      },
+      "id": "trigger-reminder",
+      "name": "Trigger Reminder Workflow",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1360, 500],
+      "notes": "SETUP: Update the webhook URL to match your n8n instance, and replace YOUR_PHONE_NUMBER"
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $credentials.httpHeaderAuth.value }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20241022\",\n  \"max_tokens\": 400,\n  \"messages\": [{\"role\": \"user\", \"content\": {{ JSON.stringify($('Determine Auto-Actions').item.json.prompt) }}}]\n}",
+        "options": {}
+      },
+      "id": "claude-compose-notification",
+      "name": "Claude Compose Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 700],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "from": "YOUR_TWILIO_PHONE_NUMBER",
+        "to": "YOUR_PHONE_NUMBER",
+        "message": "={{ $json.content[0].text }}"
+      },
+      "id": "send-notification-sms",
+      "name": "Send Action Notification SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [1140, 700],
+      "credentials": {
+        "twilioApi": {
+          "id": "TWILIO_CREDENTIAL_ID",
+          "name": "Twilio"
+        }
+      },
+      "notes": "SETUP: Replace YOUR_TWILIO_PHONE_NUMBER and YOUR_PHONE_NUMBER"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "value": "1NMy59UU_Ww__fiOwI-BM99X7cLTK3FZGFm1CdmrbQEA" },
+        "sheetName": { "value": "EventLog" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ new Date().toISOString() }}",
+            "source": "=lifesync_auto_action",
+            "from": "=LifeSync (via {{ $('Determine Auto-Actions').item.json.source }})",
+            "subject": "=Auto-action: {{ $('Determine Auto-Actions').item.json.summary }}",
+            "summary": "={{ $json.content[0].text }}",
+            "category": "={{ $('Determine Auto-Actions').item.json.category }}",
+            "priority": "={{ $('Determine Auto-Actions').item.json.priority }}",
+            "has_event": "={{ String(!!$('Determine Auto-Actions').item.json.eventDetails) }}",
+            "has_action_item": "false",
+            "action_item": "=Actions taken: {{ $('Determine Auto-Actions').item.json.actions.map(a => a.type).join(', ') }}"
+          }
+        }
+      },
+      "id": "log-auto-action",
+      "name": "Log Auto-Action to Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1360, 700],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GSHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Auto-Action Webhook": {
+      "main": [
+        [{ "node": "Determine Auto-Actions", "type": "main", "index": 0 }]
+      ]
+    },
+    "Determine Auto-Actions": {
+      "main": [
+        [{ "node": "Has Auto-Actions?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has Auto-Actions?": {
+      "main": [
+        [
+          { "node": "Prepare Action Payloads", "type": "main", "index": 0 },
+          { "node": "Claude Compose Notification", "type": "main", "index": 0 }
+        ],
+        []
+      ]
+    },
+    "Prepare Action Payloads": {
+      "main": [
+        [
+          { "node": "Is Calendar Action?", "type": "main", "index": 0 },
+          { "node": "Is Josh Notification?", "type": "main", "index": 0 },
+          { "node": "Is Reminder?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Is Calendar Action?": {
+      "main": [
+        [{ "node": "Create Calendar Event", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Is Josh Notification?": {
+      "main": [
+        [{ "node": "Send SMS to Josh", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Is Reminder?": {
+      "main": [
+        [{ "node": "Trigger Reminder Workflow", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Claude Compose Notification": {
+      "main": [
+        [
+          { "node": "Send Action Notification SMS", "type": "main", "index": 0 },
+          { "node": "Log Auto-Action to Sheet", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [{ "name": "LifeSync" }]
+}

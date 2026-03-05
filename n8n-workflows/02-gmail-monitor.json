@@ -1,0 +1,243 @@
+{
+  "name": "02 - LifeSync Gmail Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [{ "mode": "everyMinute", "value": 5 }]
+        },
+        "filters": {
+          "readStatus": "unread"
+        }
+      },
+      "id": "gmail-trigger",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 300],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail Account"
+        }
+      },
+      "notes": "SETUP: Connect your Gmail OAuth2 credentials. Polls every 5 minutes for unread emails."
+    },
+    {
+      "parameters": {
+        "jsCode": "const email = $input.item.json;\n\n// Extract key fields\nconst from = email.from?.value?.[0]?.address || email.from || 'Unknown';\nconst subject = email.subject || 'No Subject';\nconst body = (email.text || email.snippet || '').substring(0, 2000); // Limit body size\nconst date = email.date || new Date().toISOString();\n\n// Detect Blackbaud / school portal emails\nconst fromLower = from.toLowerCase();\nconst subjectLower = subject.toLowerCase();\nconst isSchoolPortal = fromLower.includes('myschoolapp') || fromLower.includes('blackbaud') || fromLower.includes('stpcs') || subjectLower.includes('blackbaud') || subjectLower.includes('myschoolapp');\n\nreturn [{\n  json: {\n    from,\n    subject,\n    body,\n    date,\n    emailId: email.id,\n    isSchoolPortal,\n    promptText: `From: ${from}\\nSubject: ${subject}\\nDate: ${date}\\n\\nBody:\\n${body}`\n  }\n}];"
+      },
+      "id": "extract-email",
+      "name": "Extract Email Fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $credentials.httpHeaderAuth.value }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20241022\",\n  \"max_tokens\": 512,\n  \"system\": \"You are a family email classifier. Analyze this email and extract relevant information for a busy parent. Respond with ONLY a JSON object (no markdown, no code blocks) with these fields:\\n- summary: 1-2 sentence summary\\n- category: one of [school, sports, medical, family, work, social, bills, spam]\\n- priority: one of [high, medium, low]\\n- has_event: boolean - does this contain a date/time event?\\n- event_details: if has_event is true, object with {title, date, time, location}\\n- has_action_item: boolean - does this require a response or action?\\n- action_item: if has_action_item is true, brief description of what's needed\\n- notify_josh: boolean - should the co-parent be notified about this?\",\n  \"messages\": [{\"role\": \"user\", \"content\": {{ JSON.stringify($json.promptText) }}}]\n}",
+        "options": {}
+      },
+      "id": "claude-classify",
+      "name": "Claude Classify Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.item.json;\nconst emailData = $('Extract Email Fields').item.json;\nlet parsed;\n\ntry {\n  parsed = JSON.parse(response.content[0].text);\n} catch (e) {\n  // Try to extract JSON from the response\n  const match = response.content[0].text.match(/\\{[\\s\\S]*\\}/);\n  if (match) {\n    parsed = JSON.parse(match[0]);\n  } else {\n    parsed = {\n      summary: 'Could not parse email',\n      category: 'unknown',\n      priority: 'low',\n      has_event: false,\n      has_action_item: false,\n      notify_josh: false\n    };\n  }\n}\n\n// Blackbaud / school portal emails are always at least medium priority\nif (emailData.isSchoolPortal && parsed.priority === 'low') {\n  parsed.priority = 'medium';\n}\nif (emailData.isSchoolPortal) {\n  parsed.category = 'school';\n}\n\nreturn [{\n  json: {\n    ...emailData,\n    ...parsed,\n    timestamp: new Date().toISOString(),\n    source: emailData.isSchoolPortal ? 'blackbaud' : 'gmail'\n  }\n}];"
+      },
+      "id": "parse-classification",
+      "name": "Parse Classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.priority }}",
+              "rightValue": "low",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ]
+        }
+      },
+      "id": "priority-filter",
+      "name": "Priority >= Medium?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1100, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.item.json;\nconst priorityEmoji = { high: '\\u2757', medium: '\\u2755', low: '\\u2139\\uFE0F' };\nconst categoryEmoji = { school: '\\uD83C\\uDFEB', sports: '\\u26BD', medical: '\\uD83C\\uDFE5', family: '\\uD83D\\uDC68\\u200D\\uD83D\\uDC69\\u200D\\uD83D\\uDC67', work: '\\uD83D\\uDCBC', social: '\\uD83C\\uDF89', bills: '\\uD83D\\uDCB0', spam: '\\uD83D\\uDEAB' };\n\nlet message = `${priorityEmoji[data.priority] || ''} ${data.category?.toUpperCase() || 'EMAIL'}\\n\\n`;\nmessage += `From: ${data.from}\\n`;\nmessage += `Subject: ${data.subject}\\n\\n`;\nmessage += `${data.summary}\\n`;\n\nif (data.has_event && data.event_details) {\n  const e = data.event_details;\n  message += `\\nEvent Detected: ${e.title || 'TBD'}\\n`;\n  if (e.date) message += `Date: ${e.date}\\n`;\n  if (e.time) message += `Time: ${e.time}\\n`;\n  if (e.location) message += `Location: ${e.location}\\n`;\n}\n\nif (data.has_action_item) {\n  message += `\\nAction needed: ${data.action_item}\\n`;\n}\n\nmessage += `\\nReply to this text to take action.`;\n\nreturn [{ json: { message, to: 'YOUR_PHONE_NUMBER' } }];"
+      },
+      "id": "format-sms",
+      "name": "Format SMS Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 200],
+      "notes": "SETUP: Replace YOUR_PHONE_NUMBER with your actual phone number (e.g., +15551234567)"
+    },
+    {
+      "parameters": {
+        "from": "YOUR_TWILIO_PHONE_NUMBER",
+        "to": "={{ $json.to }}",
+        "message": "={{ $json.message }}"
+      },
+      "id": "send-sms",
+      "name": "Send SMS via Twilio",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [1540, 200],
+      "credentials": {
+        "twilioApi": {
+          "id": "TWILIO_CREDENTIAL_ID",
+          "name": "Twilio"
+        }
+      },
+      "notes": "SETUP: Replace YOUR_TWILIO_PHONE_NUMBER with your Twilio number (e.g., +15551234567)"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "value": "1NMy59UU_Ww__fiOwI-BM99X7cLTK3FZGFm1CdmrbQEA" },
+        "sheetName": { "value": "EventLog" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ $json.timestamp }}",
+            "source": "gmail",
+            "from": "={{ $json.from }}",
+            "subject": "={{ $json.subject }}",
+            "summary": "={{ $json.summary }}",
+            "category": "={{ $json.category }}",
+            "priority": "={{ $json.priority }}",
+            "has_event": "={{ $json.has_event }}",
+            "has_action_item": "={{ $json.has_action_item }}",
+            "action_item": "={{ $json.action_item || '' }}"
+          }
+        }
+      },
+      "id": "log-to-sheet",
+      "name": "Log to Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1100, 450],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GSHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets"
+        }
+      },
+      "notes": "Sheet ID configured with your Google Sheet ID"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.has_event }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "id": "auto-action-check",
+      "name": "Has Auto-Actionable Event?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1320, 450]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.WEBHOOK_BASE_URL || 'https://your-n8n.app.n8n.cloud' }}/webhook/lifesync-auto-action",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"source\": \"gmail\",\n  \"from\": {{ JSON.stringify($json.from) }},\n  \"subject\": {{ JSON.stringify($json.subject) }},\n  \"summary\": {{ JSON.stringify($json.summary) }},\n  \"category\": {{ JSON.stringify($json.category) }},\n  \"priority\": {{ JSON.stringify($json.priority) }},\n  \"event_details\": {{ JSON.stringify($json.event_details || null) }},\n  \"suggested_actions\": [{{ $json.has_action_item ? '\"set_reminder\"' : '' }}{{ $json.notify_josh ? ', \"notify_josh\"' : '' }}],\n  \"original_message\": {{ JSON.stringify($json.subject) }},\n  \"notify_josh\": {{ $json.notify_josh || false }}\n}",
+        "options": {}
+      },
+      "id": "trigger-auto-action",
+      "name": "Trigger Auto-Action (WF10)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1540, 450],
+      "notes": "SETUP: Update the webhook URL to match your n8n instance"
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [{ "node": "Extract Email Fields", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract Email Fields": {
+      "main": [
+        [{ "node": "Claude Classify Email", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude Classify Email": {
+      "main": [
+        [{ "node": "Parse Classification", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Classification": {
+      "main": [
+        [
+          { "node": "Priority >= Medium?", "type": "main", "index": 0 },
+          { "node": "Log to Google Sheet", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Priority >= Medium?": {
+      "main": [
+        [{ "node": "Format SMS Message", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Format SMS Message": {
+      "main": [
+        [{ "node": "Send SMS via Twilio", "type": "main", "index": 0 }]
+      ]
+    },
+    "Log to Google Sheet": {
+      "main": [
+        [{ "node": "Has Auto-Actionable Event?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has Auto-Actionable Event?": {
+      "main": [
+        [{ "node": "Trigger Auto-Action (WF10)", "type": "main", "index": 0 }],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [{ "name": "LifeSync" }]
+}

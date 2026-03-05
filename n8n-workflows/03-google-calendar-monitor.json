@@ -1,0 +1,152 @@
+{
+  "name": "03 - LifeSync Google Calendar Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [{ "mode": "everyMinute", "value": 5 }]
+        },
+        "calendarId": "primary"
+      },
+      "id": "gcal-trigger",
+      "name": "Google Calendar Trigger",
+      "type": "n8n-nodes-base.googleCalendarTrigger",
+      "typeVersion": 1.1,
+      "position": [220, 300],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "GCAL_CREDENTIAL_ID",
+          "name": "Google Calendar"
+        }
+      },
+      "notes": "SETUP: Connect Google Calendar OAuth2 credentials. Monitors for new/updated/cancelled events."
+    },
+    {
+      "parameters": {
+        "jsCode": "const event = $input.item.json;\n\nconst title = event.summary || 'Untitled Event';\nconst start = event.start?.dateTime || event.start?.date || 'TBD';\nconst end = event.end?.dateTime || event.end?.date || '';\nconst location = event.location || '';\nconst description = (event.description || '').substring(0, 500);\nconst status = event.status || 'confirmed';\nconst updated = event.updated || '';\nconst organizer = event.organizer?.email || '';\n\n// Determine if this is new, updated, or cancelled\nlet changeType = 'new';\nif (status === 'cancelled') changeType = 'cancelled';\nelse if (updated && new Date(updated) > new Date(Date.now() - 5 * 60 * 1000)) changeType = 'updated';\n\nreturn [{\n  json: {\n    title,\n    start,\n    end,\n    location,\n    description,\n    status,\n    changeType,\n    organizer,\n    eventId: event.id\n  }\n}];"
+      },
+      "id": "extract-event",
+      "name": "Extract Event Details",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $credentials.httpHeaderAuth.value }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20241022\",\n  \"max_tokens\": 256,\n  \"system\": \"Summarize this calendar change in one friendly sentence for a busy parent. Be concise. Include the key details: what, when, where.\",\n  \"messages\": [{\"role\": \"user\", \"content\": \"Calendar event ${$json.changeType}: ${$json.title}\\nWhen: ${$json.start}${$json.end ? ' to ' + $json.end : ''}\\nWhere: ${$json.location || 'No location'}\\nDetails: ${$json.description || 'None'}\"}]\n}",
+        "options": {}
+      },
+      "id": "claude-summarize",
+      "name": "Claude Summarize",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.item.json;\nconst eventData = $('Extract Event Details').item.json;\nconst summary = response.content[0].text;\n\nconst changeEmoji = {\n  new: '\\uD83D\\uDCC5',\n  updated: '\\uD83D\\uDD04',\n  cancelled: '\\u274C'\n};\n\nconst changeLabel = {\n  new: 'New Event',\n  updated: 'Event Updated',\n  cancelled: 'Event Cancelled'\n};\n\nlet message = `${changeEmoji[eventData.changeType] || '\\uD83D\\uDCC5'} *${changeLabel[eventData.changeType] || 'Calendar'}*\\n\\n`;\nmessage += `${summary}`;\n\nreturn [{\n  json: {\n    message,\n    to: 'YOUR_PHONE_NUMBER',\n    eventData,\n    summary\n  }\n}];"
+      },
+      "id": "format-message",
+      "name": "Format Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300],
+      "notes": "SETUP: Replace YOUR_PHONE_NUMBER with your phone number (e.g., +15551234567)"
+    },
+    {
+      "parameters": {
+        "from": "YOUR_TWILIO_PHONE_NUMBER",
+        "to": "={{ $json.to }}",
+        "message": "={{ $json.message }}"
+      },
+      "id": "send-sms",
+      "name": "Send SMS via Twilio",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [1100, 300],
+      "credentials": {
+        "twilioApi": {
+          "id": "TWILIO_CREDENTIAL_ID",
+          "name": "Twilio"
+        }
+      },
+      "notes": "SETUP: Replace YOUR_TWILIO_PHONE_NUMBER"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "value": "1NMy59UU_Ww__fiOwI-BM99X7cLTK3FZGFm1CdmrbQEA" },
+        "sheetName": { "value": "EventLog" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ new Date().toISOString() }}",
+            "source": "google_calendar",
+            "from": "={{ $json.eventData.organizer }}",
+            "subject": "={{ $json.eventData.title }}",
+            "summary": "={{ $json.summary }}",
+            "category": "calendar",
+            "priority": "medium",
+            "has_event": "true",
+            "has_action_item": "false",
+            "action_item": ""
+          }
+        }
+      },
+      "id": "log-to-sheet",
+      "name": "Log to Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1100, 500],
+      "notes": "Sheet ID configured"
+    }
+  ],
+  "connections": {
+    "Google Calendar Trigger": {
+      "main": [
+        [{ "node": "Extract Event Details", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract Event Details": {
+      "main": [
+        [{ "node": "Claude Summarize", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude Summarize": {
+      "main": [
+        [{ "node": "Format Message", "type": "main", "index": 0 }]
+      ]
+    },
+    "Format Message": {
+      "main": [
+        [
+          { "node": "Send SMS via Twilio", "type": "main", "index": 0 },
+          { "node": "Log to Google Sheet", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [{ "name": "LifeSync" }]
+}
